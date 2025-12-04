@@ -1,0 +1,102 @@
+"""Configuration settings for AI Coding Agent."""
+
+from pydantic_settings import BaseSettings
+from typing import Optional, Literal
+from pathlib import Path
+
+
+class Settings(BaseSettings):
+    """Application settings with cloud migration support."""
+
+    # LLM Provider Selection
+    # Options: "ollama", "claude", "gemini", "hybrid"
+    LLM_PROVIDER: Literal["ollama", "claude", "gemini", "hybrid"] = "ollama"
+
+    # Ollama Configuration
+    # Local: http://localhost:11434
+    # Cloud: https://ai-server.yourcompany.com
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    MODEL_NAME: str = "qwen2.5-coder:1.5b"
+
+    # Claude/Anthropic Configuration
+    ANTHROPIC_API_KEY: Optional[str] = None
+    CLAUDE_MODEL: str = "claude-3-haiku-20240307"  # Haiku is most cost-effective
+
+    # Gemini/Google Configuration
+    GOOGLE_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+
+    # Model Parameters
+    TEMPERATURE: float = 0.1
+    MAX_TOKENS: int = 2000
+
+    # Memory Configuration
+    MAX_HISTORY_LENGTH: int = 10
+
+    # CLI Configuration
+    CLI_THEME: str = "monokai"
+    STREAM_OUTPUT: bool = True
+
+    # Hybrid Mode Settings
+    # If LLM_PROVIDER="hybrid", use these keywords to route to Claude
+    CLAUDE_KEYWORDS: list = [
+        "architecture", "design pattern", "refactor", "optimize",
+        "security", "best practice", "review", "compare"
+    ]
+
+    # Tool Configuration (NEW)
+    ENABLE_TOOLS: bool = True  # Feature flag - start disabled for gradual rollout
+    ENABLE_FILE_OPS: bool = True
+    ENABLE_RAG: bool = True
+
+    # RAG Configuration (NEW)
+    VECTOR_DB: str = "faiss"  # Using FAISS instead of ChromaDB (better Python 3.13 support)
+    FAISS_INDEX_PATH: str = str(Path.home() / ".ai-agent" / "faiss_index")
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    RAG_TOP_K: int = 5
+    RAG_CHUNK_SIZE: int = 500
+    RAG_CHUNK_OVERLAP: int = 50
+    INDEX_SCHEMA_VERSION: int = 1  # Increment to force reindex
+
+    # File Operations Configuration (NEW)
+    MAX_FILE_SIZE_MB: int = 10
+    ALLOWED_EXTENSIONS: list = [".py", ".js", ".ts", ".md", ".json", ".yaml", ".yml", ".txt"]
+    FILE_BACKUP_ENABLED: bool = True
+    FILE_BACKUP_SUFFIX: str = ".bak"
+    MAX_FILE_OPS_PER_MINUTE: int = 50  # Rate limiting
+
+    # Indexing Configuration (NEW)
+    AUTO_INDEX_ON_START: bool = False
+    INDEX_BATCH_SIZE: int = 32
+    INDEX_EXCLUDE_PATTERNS: list = [
+        ".venv/*", "venv/*", "node_modules/*",
+        "__pycache__/*", "*.pyc", ".git/*",
+        "*.egg-info/*", "dist/*", "build/*"
+    ]
+    INDEXER_EXCLUDE_PATTERNS: list = []  # Additional user-defined exclusions
+    USE_GITIGNORE: bool = True  # Respect .gitignore patterns
+
+    # Allowed file extensions for indexing
+    ALLOWED_FILE_EXTENSIONS: list = [
+        ".py", ".js", ".ts", ".tsx", ".jsx",
+        ".md", ".txt", ".json", ".yaml", ".yml",
+        ".java", ".go", ".rs", ".cpp", ".c", ".h"
+    ]
+
+    # Chunking Configuration (NEW)
+    CHUNK_SIZE: int = 500  # Characters per chunk (for text chunking fallback)
+    CHUNK_OVERLAP: int = 50  # Overlap between chunks
+    CHUNK_MIN_SIZE: int = 50  # Minimum chunk size to avoid tiny chunks
+
+    # Logging Configuration (NEW)
+    LOG_FILE_OPERATIONS: bool = True
+    LOG_LEVEL: str = "INFO"
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = True
+
+
+# Global settings instance
+settings = Settings()

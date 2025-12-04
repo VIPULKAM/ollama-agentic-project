@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lscpu:*)",
+      "Bash(ollama list:*)",
+      "Bash(time ollama run:*)",
+      "Bash(python3:*)",
+      "Bash(tee:*)",
+      "Bash(chmod:*)",
+      "Bash(uv --version:*)",
+      "Bash(uv venv:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(uv pip install:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(pytest:*)",
+      "Bash(uv pip uninstall:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

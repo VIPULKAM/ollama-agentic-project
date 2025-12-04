@@ -1,0 +1,58 @@
+# Sample Queries for AI Coding Agent
+
+## Python Examples
+
+Write a Python FastAPI endpoint for user login with JWT tokens
+Create a Python decorator for timing function execution
+Show me how to use async/await with database connections
+Write a Python function to paginate SQLAlchemy queries
+
+## TypeScript Examples
+
+Write a TypeScript interface for a user authentication response
+Create an Express middleware for request validation
+Show me how to use async/await in TypeScript
+Write a React hook for fetching data with error handling
+
+## PostgreSQL Examples
+
+Write a query to find duplicate records in a users table
+Create an index to optimize this slow query
+Show me a PostgreSQL CTE for hierarchical data
+Write a query with window functions for running totals
+
+## MongoDB Examples
+
+Create an aggregation pipeline for calculating monthly sales
+Write a query to find documents with nested array elements
+Show me how to create a compound index in MongoDB
+Write an update operation for embedded documents
+
+## MySQL Examples
+
+Write a query to optimize with EXPLAIN
+Create a stored procedure for user registration
+Show me how to use transactions in MySQL
+Write a query with JOIN for multiple tables
+
+## Snowflake Examples
+
+Write a query using clustering for large tables
+Show me how to create a materialized view
+Write a query to analyze query performance
+Create a zero-copy clone for testing
+
+## ClickHouse Examples
+
+Write a query using MergeTree engine
+Show me how to partition time-series data
+Write an aggregation query for analytics
+Create a materialized view for pre-aggregation
+
+## General Coding
+
+How do I prevent SQL injection in Python?
+What's the best way to handle errors in FastAPI?
+Show me connection pooling best practices
+Write a function to validate email addresses
+How do I optimize database queries for performance?
