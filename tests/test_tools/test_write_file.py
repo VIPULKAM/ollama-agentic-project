@@ -369,6 +369,28 @@ class TestWriteFileIntegration:
             if temp_file.exists():
                 temp_file.unlink()
 
+    def test_write_to_nested_directories(self, tool):
+        """Test that nested directories are created automatically."""
+        nested_path = Path("test_nested/subdir/deep/file.txt")
+        try:
+            # Ensure directories don't exist
+            if nested_path.parent.exists():
+                import shutil
+                shutil.rmtree(nested_path.parent.parent)
+
+            # Write to nested path - should create directories
+            result = tool._run(str(nested_path), "nested content", confirm_write=True)
+
+            assert "successfully" in result.lower()
+            assert nested_path.exists()
+            assert nested_path.read_text() == "nested content"
+            assert nested_path.parent.is_dir()
+        finally:
+            # Cleanup
+            if nested_path.parent.parent.exists():
+                import shutil
+                shutil.rmtree(nested_path.parent.parent)
+
     def test_tool_returns_string_always(self, tool):
         """Test that tool always returns a string, even on error."""
         test_cases = [

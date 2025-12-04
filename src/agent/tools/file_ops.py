@@ -517,10 +517,13 @@ class WriteFileTool(BaseTool):
                 )
                 diff_output = "".join(diff)
 
-            # 4. Write new content
+            # 4. Create parent directories if needed
+            validated_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 5. Write new content
             validated_path.write_text(content, encoding='utf-8')
 
-            # 5. Result Summary
+            # 6. Result Summary
             log_action = "OVERWRITE" if old_content is not None else "CREATE"
             file_ops_logger.info(
                 f"{log_action}: {validated_path} "

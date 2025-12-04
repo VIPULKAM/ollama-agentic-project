@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AI Coding Agent - A LangChain-based coding assistant that supports multiple LLM providers (Ollama for self-hosted models, Claude API, or hybrid mode). Designed for local development with easy cloud migration to AWS.
+**AI Coding Agent** - An intelligent CLI coding assistant powered by LangChain and LangGraph, supporting multiple LLM providers (Ollama local, Claude API, Google Gemini, or hybrid smart routing).
 
-**Key Concept**: This is a CLI tool that helps developers with coding questions, specialized in Python, TypeScript, and various databases (PostgreSQL, MySQL, MongoDB, Snowflake, ClickHouse, etc.).
+**Key Purpose**: Specialized coding assistant for Python, TypeScript, and database technologies (PostgreSQL, MySQL, MongoDB, Snowflake, ClickHouse, Redis, etc.)
 
-**Current Development Phase**: ✅ Tools & RAG complete (195 tests passing). LangGraph integration **verified working** - requires API key with credits to test tool execution (see Known Issues #8).
+**Current Status**: ✅ Production-ready - 195 tests passing, LangGraph agent integrated with tools and RAG system fully functional
 
 ## Architecture
 
@@ -84,71 +84,57 @@ When using hybrid mode, the agent rebuilds the chain with the selected LLM on ea
 
 ## Development Commands
 
-### Environment Setup
+### Quick Start
 
 ```bash
-# Create virtual environment
+# Setup
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# For development (includes testing/linting tools)
-pip install -r requirements-dev.txt
-
-# Copy environment template
+source venv/bin/activate
+pip install -r requirements.txt requirements-dev.txt
 cp .env.example .env
-# Edit .env to configure providers
-```
 
-### Running the Application
-
-```bash
-# Run the CLI
+# Run agent
 python main.py
 
-# Or directly
-python -m src.cli.main
+# Run tests
+pytest
+
+# Format & lint
+black src/ && ruff check src/
 ```
 
 ### Testing
 
 ```bash
-# Run all tests
+# All tests (16 test files, 195+ tests passing)
 pytest
 
-# Run with verbose output
-pytest -v
+# Quick run (specific tests)
+pytest tests/test_agent.py -v                    # Agent basics
+pytest tests/test_langgraph_agent.py -v         # LangGraph integration
+pytest tests/test_tools/ -v                      # All tool tests (147 tests)
+pytest tests/test_rag/ -v                        # All RAG tests (48 tests)
 
-# Run specific test file
-pytest tests/test_agent.py
+# Individual tool tests
+pytest tests/test_tools/test_read_file.py        # 40+ tests
+pytest tests/test_tools/test_write_file.py       # 30+ tests
+pytest tests/test_tools/test_list_directory.py   # 50+ tests
+pytest tests/test_tools/test_search_code.py      # 40+ tests
+pytest tests/test_tools/test_file_ops_security.py # 30+ security tests
 
-# Run specific test suites
-pytest tests/test_tools/           # All file operation tools tests
-pytest tests/test_rag/             # All RAG system tests
+# RAG tests
+pytest tests/test_rag/test_embeddings.py          # 31 tests
+pytest tests/test_rag/test_indexer_integration.py # 9 tests
+pytest tests/test_rag/test_retriever.py           # 8 tests
 
-# Run tests by category
-pytest tests/test_tools/test_read_file.py          # Read file tool
-pytest tests/test_tools/test_write_file.py         # Write file tool
-pytest tests/test_tools/test_list_directory.py     # List directory tool
-pytest tests/test_tools/test_search_code.py        # Search code tool
-pytest tests/test_tools/test_file_ops_security.py  # Security tests
-pytest tests/test_rag/test_embeddings.py           # Embeddings tests
-pytest tests/test_rag/test_indexer_integration.py  # Indexer tests
-pytest tests/test_rag/test_retriever.py            # Retriever tests
-
-# Run with coverage report
+# Coverage
 pytest --cov=src --cov-report=html
-
-# Run agent validation tests (includes Ollama pre-flight checks)
-pytest tests/test_agent.py -v
 ```
 
-### Development Tools
+### Code Quality
 
 ```bash
-# Code formatting
+# Formatting
 black src/
 
 # Linting
@@ -157,69 +143,45 @@ ruff check src/
 # Type checking
 mypy src/
 
-# Check Python version
-python --version  # Should be 3.10+
-
-# Verify virtual environment
-which python  # Should point to venv/bin/python
+# All three at once
+black src/ && ruff check src/ && mypy src/
 ```
 
-### Ollama Setup (for local development)
+### Local Development (Ollama)
 
 ```bash
-# Install Ollama from https://ollama.ai
+# Install Ollama: https://ollama.ai
 
 # Start Ollama service
 ollama serve
 
-# Pull the qwen2.5-coder model (current default)
+# Pull model
 ollama pull qwen2.5-coder:1.5b
 
-# Check available models
+# List models
 ollama list
 
-# Test model locally
-ollama run qwen2.5-coder:1.5b "Write a hello world in Python"
+# Test model
+ollama run qwen2.5-coder:1.5b "Write a Python function to calculate fibonacci"
 ```
 
-### Debugging and Troubleshooting
+### Debugging
 
 ```bash
-# Check if Ollama is running
+# Check Ollama service
 curl http://localhost:11434/api/tags
 
-# Test Ollama model directly
-ollama run qwen2.5-coder:1.5b "print hello world in python"
+# Verify agent config
+python -c "from src.config.settings import settings; print(f'Provider: {settings.LLM_PROVIDER}, Model: {settings.MODEL_NAME}, Tools: {settings.ENABLE_TOOLS}')"
 
-# Check installed dependencies
-pip list | grep langchain
-pip list | grep faiss
-pip list | grep sentence-transformers
+# Check dependencies
+pip list | grep -E "langchain|faiss|sentence-transformers|torch"
 
-# Verify environment variables
-python -c "from src.config.settings import Settings; s = Settings(); print(f'Provider: {s.LLM_PROVIDER}, Model: {s.MODEL_NAME}')"
+# Check FAISS index
+ls -lh ~/.ai-agent/faiss_index/ 2>/dev/null || echo "No index yet"
 
-# Check FAISS index status
-ls -lh ~/.ai-agent/faiss_index/
-
-# View logs (if logging to file)
-tail -f ~/.ai-agent/logs/agent.log
-```
-
-### RAG System Commands
-
-```bash
-# Index current codebase (if implemented in CLI)
-python main.py index
-
-# Force reindex
-python main.py index --force
-
-# Index specific directory
-python main.py index --path /path/to/code
-
-# Check index info
-python main.py info --index
+# Test agent directly
+python -c "from src.agent.agent import CodingAgent; agent = CodingAgent(); print(agent.ask('Hello'))"
 ```
 
 ## Configuration
