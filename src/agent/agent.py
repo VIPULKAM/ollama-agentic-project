@@ -195,6 +195,20 @@ class CodingAgent:
                 # Extract the final AI response
                 final_message = result["messages"][-1]
 
+                # Ensure content is always a string (LangGraph sometimes returns lists)
+                if isinstance(final_message, AIMessage):
+                    if isinstance(final_message.content, list):
+                        # Convert list of content blocks to string
+                        content_str = ""
+                        for item in final_message.content:
+                            if isinstance(item, dict) and "text" in item:
+                                content_str += item["text"]
+                            elif isinstance(item, str):
+                                content_str += item
+                            else:
+                                content_str += str(item)
+                        final_message.content = content_str
+
                 # Update conversation history
                 # Add the user query
                 self._get_session_history(self.session_id).add_user_message(query)
