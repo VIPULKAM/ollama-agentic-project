@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # Model Parameters
     TEMPERATURE: float = 0.1
-    MAX_TOKENS: int = 2000
+    MAX_TOKENS: int = 8192  # Increased for Gemini 2.5 Flash (supports up to 8192 output tokens)
 
     # Memory Configuration
     MAX_HISTORY_LENGTH: int = 10

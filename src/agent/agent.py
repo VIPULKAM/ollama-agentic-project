@@ -209,6 +209,17 @@ class CodingAgent:
                                 content_str += str(item)
                         final_message.content = content_str
 
+                    # If content is empty but tools were executed, generate summary
+                    if not final_message.content or final_message.content.strip() == "":
+                        # Check if any tools were executed
+                        from langchain_core.messages import ToolMessage
+                        tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
+
+                        if tool_messages:
+                            # Generate a summary of what was done
+                            tool_summary = self._generate_tool_summary(result["messages"])
+                            final_message.content = tool_summary
+
                 # Update conversation history
                 # Add the user query
                 self._get_session_history(self.session_id).add_user_message(query)
@@ -274,6 +285,75 @@ class CodingAgent:
 
 
 
+
+    def _generate_tool_summary(self, messages: List[BaseMessage]) -> str:
+        """Generate a summary of tool executions when agent returns empty response.
+
+        Args:
+            messages: List of messages from the LangGraph execution
+
+        Returns:
+            A formatted summary of what tools were executed and their results
+        """
+        from langchain_core.messages import ToolMessage
+
+        tool_executions = []
+
+        # Iterate through messages to find tool calls and their results
+        for i, msg in enumerate(messages):
+            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                # Found a tool call
+                for tool_call in msg.tool_calls:
+                    tool_name = tool_call.get('name', 'unknown')
+                    tool_args = tool_call.get('args', {})
+
+                    # Find the corresponding ToolMessage result
+                    result = "Executed"
+                    if i + 1 < len(messages) and isinstance(messages[i + 1], ToolMessage):
+                        result_content = messages[i + 1].content
+                        # Truncate long results
+                        if len(result_content) > 100:
+                            result = f"{result_content[:100]}..."
+                        else:
+                            result = result_content
+
+                    tool_executions.append({
+                        'tool': tool_name,
+                        'args': tool_args,
+                        'result': result
+                    })
+
+        if not tool_executions:
+            return "Task completed successfully."
+
+        # Build summary message
+        summary_parts = ["✓ Task completed. Here's what I did:\n"]
+
+        for i, execution in enumerate(tool_executions, 1):
+            tool_name = execution['tool']
+            args = execution['args']
+            result = execution['result']
+
+            if tool_name == 'read_file':
+                path = args.get('path', 'unknown file')
+                summary_parts.append(f"{i}. Read file: `{path}`")
+            elif tool_name == 'write_file':
+                path = args.get('path', 'unknown file')
+                size = len(args.get('content', ''))
+                summary_parts.append(f"{i}. Updated file: `{path}` ({size} bytes)")
+            elif tool_name == 'list_directory':
+                path = args.get('path', '.')
+                summary_parts.append(f"{i}. Listed directory: `{path}`")
+            elif tool_name == 'search_code':
+                pattern = args.get('pattern', '')
+                summary_parts.append(f"{i}. Searched for pattern: `{pattern}`")
+            elif tool_name == 'rag_search':
+                query = args.get('query', '')
+                summary_parts.append(f"{i}. Searched codebase for: `{query}`")
+            else:
+                summary_parts.append(f"{i}. Executed tool: `{tool_name}`")
+
+        return "\n".join(summary_parts)
 
     def clear_history(self) -> None:
         """Clear the conversation history."""

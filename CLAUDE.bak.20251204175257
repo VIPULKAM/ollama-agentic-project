@@ -831,4 +831,4 @@ ollama-agentic-project/
 
 4. **Advanced Chunking Strategies:**
    - Semantic Chunking: Group code by semantic relatedness rather than just AST structure
-   - Dependency-Aware Chunking: Include dependent functions and classes in chunks for richer context[ This is a test ]
+   - Dependency-Aware Chunking: Include dependent functions and classes in chunks for richer context
