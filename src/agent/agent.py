@@ -7,7 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.language_models.base import BaseLanguageModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from typing import Optional, List
 from langchain_core.tools import BaseTool
 
@@ -182,7 +182,6 @@ class CodingAgent:
                 history = self._get_session_history(self.session_id).messages
 
                 # Create input with history + new query
-                from langchain_core.messages import HumanMessage
                 messages = history + [HumanMessage(content=query)]
 
                 # Invoke LangGraph with checkpointing for conversation memory
@@ -212,7 +211,6 @@ class CodingAgent:
                     # If content is empty but tools were executed, generate summary
                     if not final_message.content or final_message.content.strip() == "":
                         # Check if any tools were executed
-                        from langchain_core.messages import ToolMessage
                         tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
 
                         if tool_messages:
@@ -286,6 +284,120 @@ class CodingAgent:
 
 
 
+    def ask_stream(self, query: str, force_provider: Optional[str] = None):
+        """Ask the agent a question with streaming responses.
+
+        Yields status updates as the agent works through tools and reasoning.
+
+        Args:
+            query: User query
+            force_provider: Optional provider override
+
+        Yields:
+            dict: Status updates with 'type' and 'content' keys
+        """
+        try:
+            selected_llm = self._select_llm(query, force_provider)
+
+            if self.use_tools:
+                # Rebuild agent if LLM changed
+                if self.llm != selected_llm:
+                    self.llm = selected_llm
+                    self._setup_langgraph_agent()
+
+                # Get conversation history
+                history = self._get_session_history(self.session_id).messages
+
+                # Create input with history + new query
+                messages = history + [HumanMessage(content=query)]
+
+                # Stream LangGraph execution
+                config = {"configurable": {"thread_id": self.session_id}}
+
+                for event in self.langgraph_app.stream(
+                    {"messages": messages},
+                    config=config,
+                    stream_mode="updates"
+                ):
+                    # Parse different event types
+                    for node_name, node_output in event.items():
+                        if "messages" in node_output:
+                            new_messages = node_output["messages"]
+
+                            for msg in new_messages:
+                                # Tool call starting
+                                if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    for tool_call in msg.tool_calls:
+                                        tool_name = tool_call.get('name', 'unknown')
+                                        yield {
+                                            'type': 'tool_start',
+                                            'content': f"🔧 Using {tool_name}..."
+                                        }
+
+                                # Tool result
+                                elif isinstance(msg, ToolMessage):
+                                    yield {
+                                        'type': 'tool_end',
+                                        'content': '✓'
+                                    }
+
+                                # AI thinking/response
+                                elif isinstance(msg, AIMessage) and msg.content:
+                                    yield {
+                                        'type': 'response',
+                                        'content': msg.content
+                                    }
+
+                # Update history after streaming completes
+                result = self.langgraph_app.invoke(
+                    {"messages": messages},
+                    config=config
+                )
+                final_message = result["messages"][-1]
+
+                # Handle empty responses
+                if isinstance(final_message, AIMessage):
+                    if isinstance(final_message.content, list):
+                        content_str = ""
+                        for item in final_message.content:
+                            if isinstance(item, dict) and "text" in item:
+                                content_str += item["text"]
+                            elif isinstance(item, str):
+                                content_str += item
+                        final_message.content = content_str
+
+                    if not final_message.content or final_message.content.strip() == "":
+                        tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
+                        if tool_messages:
+                            final_message.content = self._generate_tool_summary(result["messages"])
+
+                # Update history
+                self._get_session_history(self.session_id).add_user_message(query)
+                if isinstance(final_message, AIMessage):
+                    self._get_session_history(self.session_id).add_ai_message(final_message.content)
+
+            else:
+                # Non-streaming fallback for conversation mode
+                response = self._ask_conversation_chain(query, selected_llm)
+                yield {
+                    'type': 'response',
+                    'content': response.content
+                }
+
+        except Exception as e:
+            error_msg = f"Error: {str(e)}\n\n"
+            if "ollama" in str(e).lower():
+                error_msg += "Make sure Ollama is running: `ollama serve`"
+            elif "anthropic" in str(e).lower():
+                error_msg += "Check your ANTHROPIC_API_KEY in .env file"
+            elif "gemini" in str(e).lower() or "google" in str(e).lower():
+                error_msg += "Check your GOOGLE_API_KEY in .env file"
+
+            yield {
+                'type': 'error',
+                'content': error_msg
+            }
+
     def _generate_tool_summary(self, messages: List[BaseMessage]) -> str:
         """Generate a summary of tool executions when agent returns empty response.
 
@@ -295,8 +407,6 @@ class CodingAgent:
         Returns:
             A formatted summary of what tools were executed and their results
         """
-        from langchain_core.messages import ToolMessage
-
         tool_executions = []
 
         # Iterate through messages to find tool calls and their results

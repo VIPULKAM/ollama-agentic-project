@@ -194,16 +194,31 @@ def main():
                 print_help()
                 continue
 
-            # Get response from agent
-            with console.status("[bold blue]Agent thinking..."):
-                response = agent.ask(query)
-
-            # Display response with markdown formatting
+            # Get response from agent with streaming
             console.print("\n[bold blue]Agent:[/bold blue]")
-            if hasattr(response, 'content'):
-                console.print(Markdown(response.content))
-            else:
-                console.print(Markdown(str(response)))
+
+            response_content = ""
+            for update in agent.ask_stream(query):
+                update_type = update.get('type')
+                content = update.get('content', '')
+
+                if update_type == 'tool_start':
+                    # Show tool execution
+                    console.print(f"  [dim]{content}[/dim]", end=" ")
+                elif update_type == 'tool_end':
+                    # Tool completed
+                    console.print(f"[green]{content}[/green]")
+                elif update_type == 'response':
+                    # Accumulate response for final display
+                    response_content += content
+                elif update_type == 'error':
+                    # Show error
+                    console.print(f"[red]{content}[/red]")
+                    break
+
+            # Display final response with markdown formatting
+            if response_content:
+                console.print(Markdown(response_content))
 
         except KeyboardInterrupt:
             console.print("\n\n[yellow]Interrupted. Type 'exit' to quit.[/yellow]")
