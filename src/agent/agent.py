@@ -8,7 +8,7 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.language_models.base import BaseLanguageModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from langchain_core.tools import BaseTool
 
 # LangGraph imports
@@ -26,8 +26,21 @@ from .tools.file_ops import (
     get_list_directory_tool,
     get_search_code_tool,
 )
-from .tools.smart_file_ops import get_update_file_section_tool
+from .tools.smart_file_ops import get_update_file_section_tool, get_smart_read_file_tool
 from .tools.rag_search import get_rag_search_tool
+from .tools.git_tools import (
+    get_git_status_tool,
+    get_git_diff_tool,
+    get_git_commit_tool,
+    get_git_branch_tool,
+    get_git_log_tool,
+)
+
+# Import retry logic
+from .retry import wrap_tools_with_retry
+
+# Import planning logic
+from .planning import TaskPlanner, StepExecutor, Step
 
 
 class CodingAgent:
@@ -134,20 +147,55 @@ class CodingAgent:
             history_messages_key="history",
         )
 
-    def _setup_langgraph_agent(self):
-        """Sets up the LangGraph agent with tools using prebuilt create_react_agent."""
-        # 1. Gather tools
-        self.tools: List[BaseTool] = []
+    def _assemble_and_wrap_tools(self) -> List[BaseTool]:
+        """Assemble tools based on settings and wrap with retry logic.
+
+        This centralizes tool gathering and retry wrapping, making it easy
+        to add new tools without duplicating logic.
+
+        Returns:
+            List[BaseTool]: Tools with retry wrappers applied
+        """
+        # 1. Gather raw tools based on enabled features
+        raw_tools: List[BaseTool] = []
+
         if settings.ENABLE_FILE_OPS:
-            self.tools.extend([
+            raw_tools.extend([
                 get_read_file_tool(),
                 get_write_file_tool(),
                 get_list_directory_tool(),
                 get_search_code_tool(),
-                get_update_file_section_tool(),  # Smart tool for large files
+                get_smart_read_file_tool(),  # Smart reading for large files
+                get_update_file_section_tool(),  # Smart updating for large files
             ])
+
         if settings.ENABLE_RAG:
-            self.tools.append(get_rag_search_tool(settings))
+            raw_tools.append(get_rag_search_tool(settings))
+
+        if settings.ENABLE_GIT_TOOLS:
+            raw_tools.extend([
+                get_git_status_tool(),
+                get_git_diff_tool(),
+                get_git_commit_tool(),
+                get_git_branch_tool(),
+                get_git_log_tool(),
+            ])
+
+        # 2. Wrap tools with retry logic for resilience
+        wrapped_tools = wrap_tools_with_retry(
+            raw_tools,
+            max_retries=settings.TOOL_MAX_RETRIES,
+            backoff_factor=settings.TOOL_RETRY_BACKOFF,
+            initial_delay=settings.TOOL_RETRY_INITIAL_DELAY,
+            max_delay=settings.TOOL_RETRY_MAX_DELAY
+        )
+
+        return wrapped_tools
+
+    def _setup_langgraph_agent(self):
+        """Sets up the LangGraph agent with tools using prebuilt create_react_agent."""
+        # 1. Assemble and wrap tools
+        self.tools: List[BaseTool] = self._assemble_and_wrap_tools()
 
         # 2. Create the ReAct agent using LangGraph's prebuilt function
         # This handles all the complexity of tool calling, message routing, etc.
@@ -157,6 +205,14 @@ class CodingAgent:
             self.tools,
             checkpointer=self.checkpointer
         )
+
+        # 3. Initialize planning components (if enabled)
+        if settings.ENABLE_PLANNING:
+            self.planner = TaskPlanner(self.llm, self.tools)
+            self.executor = StepExecutor(self.tools, verbose=settings.PLANNING_VERBOSE)
+        else:
+            self.planner = None
+            self.executor = None
 
     def _get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
         """Get or create session history."""
@@ -169,17 +225,36 @@ class CodingAgent:
         query_lower = query.lower()
         return any(keyword in query_lower for keyword in settings.CLAUDE_KEYWORDS)
 
+    def _ensure_llm_and_agent(self, query: str, force_provider: Optional[str] = None) -> BaseLanguageModel:
+        """Select LLM and rebuild agent if needed (for hybrid mode).
+
+        This centralizes the logic for LLM selection and agent rebuilding,
+        ensuring consistency between ask() and ask_stream().
+
+        Args:
+            query: User query (used for hybrid mode routing)
+            force_provider: Optional provider override
+
+        Returns:
+            BaseLanguageModel: The selected LLM instance
+        """
+        # Select the appropriate LLM
+        selected_llm = self._select_llm(query, force_provider)
+
+        # Rebuild agent if LLM changed (for hybrid mode)
+        if self.use_tools and self.llm != selected_llm:
+            self.llm = selected_llm
+            self._setup_langgraph_agent()  # Rebuild with new LLM
+
+        return selected_llm
+
     def ask(self, query: str, force_provider: Optional[str] = None) -> BaseMessage:
         """Ask the agent a question. Dispatches to the appropriate chain/agent."""
         try:
-            selected_llm = self._select_llm(query, force_provider)
+            # Ensure LLM is selected and agent is ready
+            selected_llm = self._ensure_llm_and_agent(query, force_provider)
 
             if self.use_tools:
-                # Rebuild agent if LLM changed (for hybrid mode)
-                if self.llm != selected_llm:
-                    self.llm = selected_llm
-                    self._setup_langgraph_agent()  # Rebuild with new LLM
-
                 # Get conversation history
                 history = self._get_session_history(self.session_id).messages
 
@@ -299,14 +374,10 @@ class CodingAgent:
             dict: Status updates with 'type' and 'content' keys
         """
         try:
-            selected_llm = self._select_llm(query, force_provider)
+            # Ensure LLM is selected and agent is ready
+            selected_llm = self._ensure_llm_and_agent(query, force_provider)
 
             if self.use_tools:
-                # Rebuild agent if LLM changed
-                if self.llm != selected_llm:
-                    self.llm = selected_llm
-                    self._setup_langgraph_agent()
-
                 # Get conversation history
                 history = self._get_session_history(self.session_id).messages
 
@@ -510,7 +581,7 @@ class CodingAgent:
                 "claude_model": getattr(self, 'claude_model', None),
                 "claude_api_configured": bool(getattr(self, 'api_key', None)),
             })
-        
+
         if self.provider in ["gemini", "hybrid"]:
             info.update({
                 "gemini_model": getattr(self, 'gemini_model', None),
@@ -519,8 +590,161 @@ class CodingAgent:
 
         if self.provider == "hybrid":
             info["routing_keywords"] = settings.CLAUDE_KEYWORDS
-        
+
         if self.use_tools:
             info["tools"] = [tool.name for tool in self.tools]
 
         return info
+
+    def assess_query_complexity(self, query: str) -> int:
+        """Assess the complexity of a query on a scale of 1-10.
+
+        Args:
+            query: User query to assess
+
+        Returns:
+            Complexity score (1-10), where:
+            - 1-2: Simple query (single question, no tools needed)
+            - 3-5: Moderate complexity (may need 1-2 tools)
+            - 6-8: Complex (needs multiple tools, multi-step)
+            - 9-10: Very complex (requires planning, many steps)
+        """
+        # Simple heuristic-based assessment
+        score = 1
+
+        # Length factor
+        if len(query) > 200:
+            score += 2
+        elif len(query) > 100:
+            score += 1
+
+        # Multi-step indicators
+        multi_step_keywords = [
+            'and then', 'after that', 'next', 'finally', 'first', 'second',
+            'step 1', 'step 2', 'multiple', 'several', 'all', 'each'
+        ]
+        score += sum(1 for keyword in multi_step_keywords if keyword in query.lower())
+
+        # Action verbs (suggests tool use)
+        action_verbs = [
+            'read', 'write', 'update', 'modify', 'create', 'delete',
+            'search', 'find', 'list', 'analyze', 'refactor', 'implement'
+        ]
+        score += sum(0.5 for verb in action_verbs if verb in query.lower())
+
+        # File/code references (suggests multi-file operations)
+        if 'file' in query.lower():
+            score += 1
+        if 'files' in query.lower():
+            score += 2
+        if 'codebase' in query.lower():
+            score += 2
+
+        # Cap at 10
+        return min(10, int(score))
+
+    def ask_with_planning(
+        self,
+        query: str,
+        auto_approve: Optional[bool] = None
+    ) -> BaseMessage:
+        """Ask the agent a question using multi-step planning.
+
+        This method creates a plan first, optionally shows it to the user for
+        approval, then executes the plan step by step.
+
+        Args:
+            query: User's question or task
+            auto_approve: Whether to auto-approve the plan (overrides settings)
+
+        Returns:
+            Final response message with execution summary
+
+        Raises:
+            ValueError: If planning is disabled or fails
+        """
+        if not self.planner or not self.executor:
+            raise ValueError("Planning is disabled. Enable with ENABLE_PLANNING=true in .env")
+
+        # Create the plan
+        plan = self.planner.create_plan(query)
+
+        # Validate plan
+        if not self.planner.validate_plan(plan):
+            return AIMessage(content="Failed to create a valid execution plan. Falling back to direct execution.")
+
+        # Format plan for display
+        plan_text = self._format_plan_for_display(plan)
+
+        # Check if user approval is needed
+        should_auto_approve = auto_approve if auto_approve is not None else settings.PLANNING_AUTO_APPROVE
+
+        if not should_auto_approve:
+            # Return plan for user review (CLI will handle approval)
+            return AIMessage(content=f"**Execution Plan:**\n\n{plan_text}\n\n_Use 'approve' to execute or 'cancel' to abort._")
+
+        # Execute the plan
+        results = self.executor.execute_plan(plan)
+
+        # Update conversation history
+        self._get_session_history(self.session_id).add_user_message(query)
+
+        # Generate summary message
+        summary = self._generate_plan_summary(results)
+        self._get_session_history(self.session_id).add_ai_message(summary)
+
+        return AIMessage(content=summary)
+
+    def _format_plan_for_display(self, plan: List[Step]) -> str:
+        """Format a plan for user-friendly display.
+
+        Args:
+            plan: List of steps
+
+        Returns:
+            Formatted plan text
+        """
+        lines = []
+        for step in plan:
+            lines.append(f"**Step {step.number}:** {step.description}")
+            lines.append(f"  - Tool: `{step.tool}`")
+            if step.input_params:
+                params_str = ", ".join(f"{k}={v}" for k, v in step.input_params.items())
+                lines.append(f"  - Input: {params_str}")
+            lines.append(f"  - Expected: {step.expected_output}")
+            if step.dependencies:
+                deps_str = ", ".join(str(d) for d in step.dependencies)
+                lines.append(f"  - Depends on: Step(s) {deps_str}")
+            lines.append("")  # Blank line
+
+        return "\n".join(lines)
+
+    def _generate_plan_summary(self, results: Dict[str, Any]) -> str:
+        """Generate a summary message after plan execution.
+
+        Args:
+            results: Results dictionary from StepExecutor
+
+        Returns:
+            Summary message
+        """
+        plan = results["steps"]
+        success = results["success"]
+
+        if success:
+            summary = f"✓ **Plan completed successfully!**\n\n"
+        else:
+            failed_step = results["failed_step"]
+            summary = f"✗ **Plan failed at step {failed_step}**\n\n"
+
+        # List completed steps
+        summary += "**Execution Summary:**\n"
+        for step in plan:
+            if step.status == "completed":
+                summary += f"✓ Step {step.number}: {step.description}\n"
+            elif step.status == "failed":
+                summary += f"✗ Step {step.number}: {step.description} (Error: {step.error})\n"
+            elif step.status == "skipped":
+                summary += f"⊘ Step {step.number}: {step.description} (Skipped)\n"
+
+        return summary
