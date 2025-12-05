@@ -24,6 +24,9 @@ def print_welcome():
 
 **Commands:**
 - Type your coding question
+- `tools` - List all available tools
+- `config` - Show current configuration
+- `history` - Show conversation history
 - `index` - Build or update the RAG codebase index
 - `index --force` - Force a full re-index of the codebase
 - `clear` - Clear conversation history
@@ -31,7 +34,7 @@ def print_welcome():
 - `help` - Show this help message
 - `exit` or `quit` - Exit the application
 
-**Tip:** Use the `index` command to enable codebase-aware RAG search.
+**Tip:** Real-time tool execution feedback now enabled!
     """
     console.print(Panel(Markdown(welcome_text), border_style="blue"))
 
@@ -194,6 +197,27 @@ def main():
                 print_help()
                 continue
 
+            elif query.lower() == 'tools':
+                print_available_tools(agent)
+                continue
+
+            elif query.lower() == 'config':
+                print_configuration()
+                continue
+
+            elif query.lower().startswith('history'):
+                if 'clear' in query.lower():
+                    agent.clear_history()
+                    console.print("[yellow]✓ Conversation history cleared[/yellow]")
+                else:
+                    history = agent.get_conversation_history()
+                    if history:
+                        console.print("\n[bold cyan]Conversation History:[/bold cyan]")
+                        console.print(history)
+                    else:
+                        console.print("[dim]No conversation history yet[/dim]")
+                continue
+
             # Get response from agent with streaming
             console.print("\n[bold blue]Agent:[/bold blue]")
 
@@ -227,6 +251,45 @@ def main():
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
             continue
+
+
+def print_available_tools(agent: CodingAgent):
+    """Display all available tools with descriptions."""
+    table = Table(title="Available Tools", show_header=True)
+    table.add_column("Tool", style="cyan", width=25)
+    table.add_column("Description", style="white")
+
+    for tool in agent.tools:
+        # Truncate long descriptions
+        desc = tool.description.split('\n')[0][:80]
+        table.add_row(tool.name, desc)
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(agent.tools)} tools[/dim]")
+
+
+def print_configuration():
+    """Display current agent configuration."""
+    table = Table(title="Agent Configuration", show_header=True)
+    table.add_column("Setting", style="cyan", width=20)
+    table.add_column("Value", style="green")
+
+    table.add_row("Provider", settings.LLM_PROVIDER.upper())
+
+    if settings.LLM_PROVIDER == "gemini":
+        table.add_row("Model", settings.GEMINI_MODEL)
+    elif settings.LLM_PROVIDER == "claude":
+        table.add_row("Model", settings.CLAUDE_MODEL)
+    else:
+        table.add_row("Model", settings.MODEL_NAME)
+
+    table.add_row("Temperature", str(settings.TEMPERATURE))
+    table.add_row("Max Tokens", str(settings.MAX_TOKENS))
+    table.add_row("Tools Enabled", "✓" if settings.ENABLE_TOOLS else "✗")
+    table.add_row("File Operations", "✓" if settings.ENABLE_FILE_OPS else "✗")
+    table.add_row("RAG Search", "✓" if settings.ENABLE_RAG else "✗")
+
+    console.print(table)
 
 
 if __name__ == "__main__":

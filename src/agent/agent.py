@@ -26,6 +26,7 @@ from .tools.file_ops import (
     get_list_directory_tool,
     get_search_code_tool,
 )
+from .tools.smart_file_ops import get_update_file_section_tool
 from .tools.rag_search import get_rag_search_tool
 
 
@@ -143,6 +144,7 @@ class CodingAgent:
                 get_write_file_tool(),
                 get_list_directory_tool(),
                 get_search_code_tool(),
+                get_update_file_section_tool(),  # Smart tool for large files
             ])
         if settings.ENABLE_RAG:
             self.tools.append(get_rag_search_tool(settings))
