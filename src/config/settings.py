@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     LOG_FILE_OPERATIONS: bool = True
     LOG_LEVEL: str = "INFO"
 
+    # Web Crawler Configuration (NEW - CrawlAI)
+    ENABLE_WEB_CRAWLING: bool = True
+    CRAWLER_HEADLESS: bool = True  # Run browser in headless mode
+    CRAWLER_VERBOSE: bool = False
+    CRAWLED_DOCS_PATH: str = str(Path.home() / ".ai-agent" / "crawled_docs")
+    CRAWLER_USER_AGENT: str = "Mozilla/5.0 (compatible; AI-Agent/1.0; +https://github.com/yourusername/ai-agent)"
+
     # Pydantic v2 configuration
     model_config = SettingsConfigDict(
         env_file=".env",

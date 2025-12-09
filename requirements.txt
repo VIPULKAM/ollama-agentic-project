@@ -21,3 +21,4 @@ torch==2.9.1
 # File operations and utilities
 pathspec==0.12.1
 tqdm==4.66.1
+crawl4ai>=0.7.7
