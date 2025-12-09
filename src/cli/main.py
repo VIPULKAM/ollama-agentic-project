@@ -12,6 +12,13 @@ from ..config import settings
 from ..rag.indexer import build_index
 from ..rag.crawl_tracker import get_crawl_tracker
 from ..agent.tools.crawl_and_index import get_crawl_and_index_tool
+from ..rag.index_manager import (
+    get_index_info,
+    rebuild_index,
+    clean_index,
+    search_index,
+    IndexNotFoundError
+)
 import asyncio
 
 console = Console()
@@ -30,8 +37,11 @@ def print_welcome():
 - `tools` - List all available tools
 - `config` - Show current configuration
 - `history` - Show conversation history
-- `index` - Build or update the RAG codebase index
-- `index --force` - Force a full re-index of the codebase
+- **Index Management:**
+  - `index` or `index --info` - Show index statistics
+  - `index --rebuild` - Rebuild entire index from scratch
+  - `index --clean` - Remove orphaned chunks
+  - `index --search "query" [--threshold 0.3]` - Search the index directly
 - `crawl <url>` - Crawl and index a documentation URL
 - `crawled` - Show crawled documentation history
 - `clear` - Clear conversation history
@@ -103,13 +113,22 @@ def print_help():
     help_text = """
 ## Available Commands
 
-- **index** - Build or update the RAG codebase index. This allows the agent to
-  perform semantic searches over your code. Run this command whenever your
-  code changes.
-- **index --force** - Force a full re-index, ignoring any cached files.
+### Index Management
+- **index** or **index --info** - Show comprehensive index statistics (chunks, files, size, breakdown).
+- **index --rebuild** - Rebuild the entire index from scratch. Re-scans all local files.
+- **index --clean** - Remove orphaned chunks from deleted files. Keeps index clean and efficient.
+- **index --search "query"** - Search the index directly and see top results with scores.
+  - Add `--source local` or `--source crawled` to filter by source
+  - Add `--top N` to control number of results (default: 10)
+  - Add `--threshold 0.0-1.0` to set minimum similarity (default: 0.5, lower = more results)
+  - Example: `index --search "async function" --source local --top 5 --threshold 0.3`
+
+### Documentation Crawling
 - **crawl \<url\>** - Crawl and index a documentation URL. The agent can then
   search this documentation using RAG. Example: `crawl https://docs.python.org/3/library/json.html`
 - **crawled** - Show history of all crawled documentation URLs with statistics.
+
+### General Commands
 - **clear** - Clear conversation history and start fresh.
 - **info** - Show current model configuration.
 - **help** - Show this help message.
@@ -132,26 +151,161 @@ def print_help():
     console.print(Markdown(help_text))
 
 
-def run_indexing(force: bool):
-    """Run the RAG indexing process."""
-    console.print("\n[yellow]Starting codebase indexing...[/yellow]")
-    console.print(f"[dim]Force re-index: {force}[/dim]")
+def show_index_info():
+    """Display comprehensive index statistics."""
     try:
-        stats = build_index(force_reindex=force)
-        console.print("\n[green]✓ Indexing complete![/green]")
+        info = get_index_info()
 
-        table = Table(title="Indexing Statistics", show_header=True)
-        table.add_column("Metric", style="cyan")
+        if not info["exists"]:
+            console.print(f"\n[yellow]{info['message']}[/yellow]")
+            return
+
+        # Create main statistics table
+        table = Table(title="📊 Index Statistics", show_header=True)
+        table.add_column("Metric", style="cyan", width=25)
         table.add_column("Value", style="green")
 
-        table.add_row("Files Indexed", str(stats.get("files_indexed", 0)))
-        table.add_row("Total Chunks", str(stats.get("total_chunks", 0)))
-        table.add_row("Time Taken", f"{stats.get('time_taken', 0):.2f}s")
+        table.add_row("Total Chunks", f"{info['total_chunks']:,}")
+        table.add_row("Total Files", f"{info['total_files']:,}")
+        table.add_row("Crawled URLs", f"{info['crawled_urls']:,}")
+        table.add_row("Index Size", f"{info['index_size_mb']} MB")
+        table.add_row("Last Updated", info['last_updated'])
+        table.add_row("Embedding Model", info['embedding_model'])
 
-        console.print(table)
+        console.print("\n", table)
+
+        # Breakdown by source
+        source_table = Table(title="Chunks by Source", show_header=True)
+        source_table.add_column("Source", style="cyan")
+        source_table.add_column("Chunks", style="green", justify="right")
+
+        for source, count in info['chunks_by_source'].items():
+            source_table.add_row(source.capitalize(), f"{count:,}")
+
+        console.print("\n", source_table)
+
+        # Breakdown by language (top 5)
+        lang_table = Table(title="Top Languages", show_header=True)
+        lang_table.add_column("Language", style="cyan")
+        lang_table.add_column("Chunks", style="green", justify="right")
+
+        for lang, count in list(info['chunks_by_language'].items())[:5]:
+            lang_table.add_row(lang, f"{count:,}")
+
+        console.print("\n", lang_table)
+
+    except IndexNotFoundError as e:
+        console.print(f"\n[red]✗ {e}[/red]")
+    except Exception as e:
+        console.print(f"\n[red]✗ Error getting index info: {e}[/red]")
+
+
+def run_index_rebuild():
+    """Rebuild the entire index from scratch."""
+    console.print("\n[yellow]⚠️  This will rebuild the entire index from scratch.[/yellow]")
+    console.print("[dim]All local files will be re-indexed. Crawled docs will be preserved.[/dim]\n")
+
+    confirm = Prompt.ask("Continue?", choices=["y", "n"], default="n")
+
+    if confirm != "y":
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    console.print("\n[yellow]Rebuilding index...[/yellow]")
+
+    try:
+        result = rebuild_index(show_progress=True)
+
+        if result["success"]:
+            console.print(f"\n[green]✓ Index rebuilt successfully![/green]")
+
+            table = Table(title="Rebuild Statistics", show_header=True)
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="green")
+
+            table.add_row("Chunks Indexed", f"{result['chunks_indexed']:,}")
+            table.add_row("Files Processed", f"{result['files_processed']:,}")
+            table.add_row("Duration", f"{result['duration_seconds']}s")
+
+            console.print(table)
+        else:
+            console.print(f"\n[red]✗ Rebuild failed[/red]")
+            for error in result["errors"]:
+                console.print(f"[red]  - {error}[/red]")
 
     except Exception as e:
-        console.print(f"\n[red]✗ Indexing failed: {e}[/red]")
+        console.print(f"\n[red]✗ Rebuild failed: {e}[/red]")
+
+
+def run_index_clean():
+    """Clean orphaned chunks from the index."""
+    console.print("\n[yellow]Cleaning orphaned chunks...[/yellow]")
+    console.print("[dim]This will remove chunks from deleted files.[/dim]\n")
+
+    try:
+        result = clean_index()
+
+        if result["chunks_removed"] == 0:
+            console.print("\n[green]✓ Index is already clean![/green]")
+            console.print(f"[dim]{result['chunks_remaining']:,} chunks remain in index[/dim]")
+        else:
+            console.print(f"\n[green]✓ Index cleaned successfully![/green]")
+
+            table = Table(title="Cleaning Results", show_header=True)
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="green")
+
+            table.add_row("Chunks Removed", f"{result['chunks_removed']:,}")
+            table.add_row("Chunks Remaining", f"{result['chunks_remaining']:,}")
+            table.add_row("Files Removed", str(len(result['files_removed'])))
+
+            console.print(table)
+
+            if result['files_removed'] and len(result['files_removed']) <= 10:
+                console.print("\n[dim]Removed files:[/dim]")
+                for file in result['files_removed'][:10]:
+                    console.print(f"[dim]  - {file}[/dim]")
+
+    except IndexNotFoundError as e:
+        console.print(f"\n[yellow]{e}[/yellow]")
+    except Exception as e:
+        console.print(f"\n[red]✗ Cleaning failed: {e}[/red]")
+
+
+def run_index_search(query: str, top_k: int = 10, source_filter: str = None, threshold: float = 0.5):
+    """Search the index directly."""
+    console.print(f"\n[yellow]Searching for: \"{query}\"[/yellow]")
+    if source_filter:
+        console.print(f"[dim]Filter: {source_filter} files only[/dim]")
+    console.print(f"[dim]Threshold: {threshold} | Top: {top_k}[/dim]")
+
+    try:
+        results = search_index(query, top_k=top_k, threshold=threshold, source_filter=source_filter)
+
+        if not results:
+            console.print("\n[yellow]No results found[/yellow]")
+            return
+
+        console.print(f"\n[green]Found {len(results)} results:[/green]\n")
+
+        for i, result in enumerate(results, 1):
+            # Create result panel
+            score_color = "green" if result["score"] > 0.7 else "yellow" if result["score"] > 0.5 else "red"
+            title = f"#{i} - {result['file_path']} (Score: [{score_color}]{result['score']:.3f}[/{score_color}])"
+
+            content = result["content"][:200] + "..." if len(result["content"]) > 200 else result["content"]
+
+            info = f"[dim]Language: {result.get('language', 'unknown')}"
+            if result.get('start_line'):
+                info += f" | Lines: {result['start_line']}-{result['end_line']}"
+            info += "[/dim]"
+
+            console.print(Panel(f"{content}\n\n{info}", title=title, border_style="blue"))
+
+    except IndexNotFoundError as e:
+        console.print(f"\n[yellow]{e}[/yellow]")
+    except Exception as e:
+        console.print(f"\n[red]✗ Search failed: {e}[/red]")
 
 
 def run_crawl(url: str):
@@ -253,8 +407,66 @@ def main():
                 break
             
             elif query.lower().startswith("index"):
-                force = "--force" in query.lower()
-                run_indexing(force=force)
+                # Parse index subcommands
+                parts = query.lower().split()
+
+                if len(parts) == 1 or (len(parts) == 2 and parts[1] == "--info"):
+                    # index or index --info
+                    show_index_info()
+                elif len(parts) >= 2 and parts[1] == "--rebuild":
+                    # index --rebuild
+                    run_index_rebuild()
+                elif len(parts) >= 2 and parts[1] == "--clean":
+                    # index --clean
+                    run_index_clean()
+                elif len(parts) >= 2 and parts[1] == "--search":
+                    # index --search "query" [--source local|crawled] [--top 10] [--threshold 0.3]
+                    if len(parts) < 3:
+                        console.print("[red]Usage: index --search \"query\" [--source local|crawled] [--top N] [--threshold 0.0-1.0][/red]")
+                    else:
+                        # Extract query (everything between quotes or after --search)
+                        query_text = query.split("--search", 1)[1].strip()
+
+                        # Extract source filter
+                        source_filter = None
+                        if "--source" in query_text:
+                            source_part = query_text.split("--source")[1].strip().split()[0]
+                            if source_part in ["local", "crawled"]:
+                                source_filter = source_part
+                                query_text = query_text.split("--source")[0].strip()
+
+                        # Extract top_k
+                        top_k = 10
+                        if "--top" in query_text:
+                            try:
+                                top_k = int(query_text.split("--top")[1].strip().split()[0])
+                                query_text = query_text.split("--top")[0].strip()
+                            except (ValueError, IndexError):
+                                pass
+
+                        # Extract threshold
+                        threshold = 0.5
+                        if "--threshold" in query_text:
+                            try:
+                                threshold = float(query_text.split("--threshold")[1].strip().split()[0])
+                                query_text = query_text.split("--threshold")[0].strip()
+                            except (ValueError, IndexError):
+                                pass
+
+                        # Remove quotes if present
+                        query_text = query_text.strip('"').strip("'").strip()
+
+                        if query_text:
+                            run_index_search(query_text, top_k=top_k, source_filter=source_filter, threshold=threshold)
+                        else:
+                            console.print("[red]Please provide a search query[/red]")
+                else:
+                    console.print("[yellow]Unknown index command. Try:[/yellow]")
+                    console.print("[dim]  index --info     - Show index statistics[/dim]")
+                    console.print("[dim]  index --rebuild  - Rebuild entire index[/dim]")
+                    console.print("[dim]  index --clean    - Clean orphaned chunks[/dim]")
+                    console.print("[dim]  index --search \"query\" [--threshold 0.3] - Search the index[/dim]")
+
                 continue
 
             elif query.lower().startswith("crawl "):
