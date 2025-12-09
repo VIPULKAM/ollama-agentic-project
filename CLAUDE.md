@@ -855,6 +855,56 @@ Note: Some tests require Ollama to be running (`ollama serve`) and the model to 
       - Skip duplicates to save time/costs
     - ✅ **Total Test Count**: 303 tests (285 existing + 18 batch crawler)
 
+23. **Documentation Crawl Profiles** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Created `src/rag/crawl_profiles.py` module (300 lines)
+    - ✅ Implemented `CrawlProfile` dataclass for profile configuration:
+      - name, description, urls, sitemap_url, url_filter, max_concurrent
+      - Validation: Must have either URLs or sitemap
+      - Two profile types: URL list-based or sitemap-based
+    - ✅ Implemented `ProfileManager` class for profile management:
+      - `get_profile()` - Get profile by name
+      - `list_profiles()` - List all profiles (sorted by name)
+      - `add_profile()` - Add or update a profile
+      - `remove_profile()` - Remove a profile
+      - `get_stats()` - Profile statistics (total, sitemap vs URL list)
+      - JSON persistence at `~/.ai-agent/crawled_docs/crawl_profiles.json`
+    - ✅ **10 Default Profiles** for popular frameworks:
+      - **fastapi** - FastAPI docs (sitemap + /tutorial/ filter)
+      - **django** - Django core docs (9 key URLs)
+      - **react** - React docs (sitemap + /learn/ filter)
+      - **vue** - Vue.js docs (8 key URLs)
+      - **typescript** - TypeScript handbook (sitemap + /docs/handbook/ filter)
+      - **python-stdlib** - Python standard library (sitemap + /library/ filter)
+      - **flask** - Flask docs (5 key URLs)
+      - **express** - Express.js docs (6 key URLs)
+      - **postgresql** - PostgreSQL SQL commands (sitemap + /sql- filter)
+      - **langchain** - LangChain docs (sitemap + /docs/ filter)
+    - ✅ CLI integration in `src/cli/main.py`:
+      - `crawl --profile <name> [--parallel N]` - Crawl using a profile
+      - `profiles` - List all available profiles (rich table)
+      - `profiles --info <name>` - Show detailed profile information (panel)
+      - Profile crawling uses existing batch crawler infrastructure
+      - Supports both sitemap and URL list profiles
+    - ✅ Rich console output:
+      - Profile list table with name, description, type, URL count
+      - Profile info panel with detailed configuration
+      - Crawl results table with statistics
+    - ✅ Global singleton: `get_profile_manager()` for easy access
+    - ✅ Comprehensive test suite: `tests/test_rag/test_crawl_profiles.py`
+      - 25 tests covering all functionality
+      - Tests for CrawlProfile dataclass (4 tests)
+      - Tests for ProfileManager (15 tests)
+      - Tests for singleton pattern (2 tests)
+      - Tests for specific default profiles (4 tests)
+      - Mock-based unit tests for clean isolation
+    - ✅ **Benefits**:
+      - One-command crawling of entire documentation sites
+      - Pre-configured for popular frameworks (no URL hunting)
+      - Customizable - users can add their own profiles
+      - Saves time and ensures complete coverage
+      - Profile configurations persist across sessions
+    - ✅ **Total Test Count**: 328 tests (303 existing + 25 profiles)
+
 ## Future Enhancements (as documented)
 
 From ARCHITECTURE.md roadmap:
@@ -903,7 +953,8 @@ ollama-agentic-project/
 │   │   ├── web_crawler.py        # CrawlAI web documentation (✅ COMPLETE)
 │   │   ├── crawl_tracker.py      # URL tracking & deduplication (✅ COMPLETE)
 │   │   ├── index_manager.py      # Index management utilities (✅ COMPLETE)
-│   │   └── batch_crawler.py      # Batch crawling & sitemap support (✅ COMPLETE)
+│   │   ├── batch_crawler.py      # Batch crawling & sitemap support (✅ COMPLETE)
+│   │   └── crawl_profiles.py     # Pre-configured crawl profiles (✅ COMPLETE)
 │   └── utils/
 │       ├── __init__.py
 │       ├── logging.py            # Structured logging (✅ COMPLETE)
@@ -921,14 +972,15 @@ ollama-agentic-project/
 │   │   ├── test_search_code.py
 │   │   ├── test_file_ops_security.py
 │   │   └── test_crawl_and_index.py
-│   └── test_rag/                 # RAG tests (7 test files)
+│   └── test_rag/                 # RAG tests (8 test files)
 │       ├── test_embeddings.py
 │       ├── test_indexer_integration.py
 │       ├── test_retriever.py
 │       ├── test_crawl_tracker.py       # ✅ (31 tests)
 │       ├── test_crawl_integration.py   # ✅ (8 tests)
-│       ├── test_index_manager.py       # ✅ NEW (10 tests)
-│       └── test_batch_crawler.py       # ✅ NEW (18 tests)
+│       ├── test_index_manager.py       # ✅ (10 tests)
+│       ├── test_batch_crawler.py       # ✅ (18 tests)
+│       └── test_crawl_profiles.py      # ✅ NEW (25 tests)
 ├── scripts/
 │   ├── benchmark_models.py       # Model comparison
 │   └── test_react_format.py      # ReAct validation (✅ PASSED)

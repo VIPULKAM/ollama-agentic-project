@@ -24,6 +24,7 @@ from ..rag.batch_crawler import (
     batch_crawl_from_sitemap,
     BatchCrawlResult
 )
+from ..rag.crawl_profiles import get_profile_manager
 import asyncio
 from pathlib import Path
 
@@ -50,9 +51,12 @@ def print_welcome():
   - `index --search "query" [--threshold 0.3]` - Search the index directly
 - **Documentation Crawling:**
   - `crawl <url>` - Crawl and index a single documentation URL
+  - `crawl --profile <name> [--parallel N]` - Crawl using a pre-configured profile
   - `crawl --batch <file> [--parallel N]` - Batch crawl URLs from file
   - `crawl --sitemap <url> [--filter pattern] [--parallel N]` - Crawl from sitemap
   - `crawled` - Show crawled documentation history
+  - `profiles` - List all available crawl profiles
+  - `profiles --info <name>` - Show details about a specific profile
 - `clear` - Clear conversation history
 - `info` - Show model information
 - `help` - Show this help message
@@ -133,7 +137,7 @@ def print_help():
   - Example: `index --search "async function" --source local --top 5 --threshold 0.3`
 
 ### Documentation Crawling
-- **crawl \<url\>** - Crawl and index a documentation URL. The agent can then
+- **crawl <url>** - Crawl and index a documentation URL. The agent can then
   search this documentation using RAG. Example: `crawl https://docs.python.org/3/library/json.html`
 - **crawled** - Show history of all crawled documentation URLs with statistics.
 
@@ -424,6 +428,152 @@ def run_sitemap_crawl(sitemap_url: str, url_filter: str = None, max_concurrent: 
         console.print(f"\n[red]✗ Sitemap crawl failed: {e}[/red]")
 
 
+def run_profile_crawl(profile_name: str, max_concurrent: int = None):
+    """Crawl using a pre-configured profile."""
+    manager = get_profile_manager()
+    profile = manager.get_profile(profile_name)
+
+    if not profile:
+        console.print(f"\n[red]✗ Profile '{profile_name}' not found[/red]")
+        console.print("[dim]Use 'profiles' to see available profiles[/dim]")
+        return
+
+    console.print(f"\n[yellow]Crawling using profile: {profile.name}[/yellow]")
+    console.print(f"[dim]{profile.description}[/dim]\n")
+
+    # Use profile's max_concurrent if not overridden
+    if max_concurrent is None:
+        max_concurrent = profile.max_concurrent
+
+    try:
+        # Determine crawl method based on profile
+        if profile.sitemap_url:
+            # Sitemap-based profile
+            result = asyncio.run(batch_crawl_from_sitemap(
+                profile.sitemap_url,
+                url_filter=profile.url_filter,
+                max_concurrent=max_concurrent,
+                show_progress=True
+            ))
+        elif profile.urls:
+            # URL list-based profile
+            result = asyncio.run(batch_crawl_from_file(
+                Path("temp_profile_urls.txt"),  # Dummy path, we'll pass URLs directly
+                max_concurrent=max_concurrent,
+                show_progress=True
+            ))
+            # TODO: Better approach - add batch_crawl_urls() that takes list directly
+            # For now, use the BatchCrawler directly
+            from ..rag.batch_crawler import BatchCrawler
+            crawler = BatchCrawler(max_concurrent=max_concurrent)
+            result = asyncio.run(crawler.crawl_batch(profile.urls, show_progress=True))
+            asyncio.run(crawler.cleanup())
+        else:
+            console.print("[red]✗ Profile has no URLs or sitemap configured[/red]")
+            return
+
+        # Display results
+        console.print(f"\n[green]✓ Profile crawl complete![/green]")
+
+        table = Table(title=f"Profile Crawl Results: {profile.name}", show_header=True)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="white")
+
+        table.add_row("Total URLs", str(result.total_urls))
+        table.add_row("Successful", f"[green]{result.successful}[/green]")
+        table.add_row("Failed", f"[red]{result.failed}[/red]")
+        table.add_row("Skipped (already crawled)", f"[blue]{result.skipped}[/blue]")
+        table.add_row("Duration", f"{result.duration_seconds:.1f}s")
+
+        console.print(table)
+
+        # Show failed URLs if any
+        if result.urls_failed:
+            console.print(f"\n[yellow]Failed URLs ({len(result.urls_failed)}):[/yellow]")
+            for failed in result.urls_failed[:5]:
+                console.print(f"[red]  ✗ {failed['url']}: {failed['error']}[/red]")
+            if len(result.urls_failed) > 5:
+                console.print(f"[dim]  ... and {len(result.urls_failed) - 5} more[/dim]")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Profile crawl failed: {e}[/red]")
+
+
+def show_profiles():
+    """Display all available crawl profiles."""
+    manager = get_profile_manager()
+    profiles = manager.list_profiles()
+
+    if not profiles:
+        console.print("\n[dim]No profiles found[/dim]")
+        return
+
+    console.print(f"\n[bold cyan]Available Crawl Profiles ({len(profiles)})[/bold cyan]\n")
+
+    table = Table(show_header=True)
+    table.add_column("Name", style="cyan", width=20)
+    table.add_column("Description", style="white", width=50)
+    table.add_column("Type", style="yellow", width=12)
+    table.add_column("URLs", justify="right", style="green")
+
+    for profile in profiles:
+        # Determine type
+        if profile.sitemap_url:
+            crawl_type = "Sitemap"
+            url_count = "Auto"
+        else:
+            crawl_type = "URL List"
+            url_count = str(len(profile.urls))
+
+        table.add_row(
+            profile.name,
+            profile.description,
+            crawl_type,
+            url_count
+        )
+
+    console.print(table)
+
+    console.print("\n[dim]Usage: crawl --profile <name> [--parallel N][/dim]")
+    console.print("[dim]Example: crawl --profile fastapi[/dim]")
+
+
+def show_profile_info(profile_name: str):
+    """Display detailed information about a specific profile."""
+    manager = get_profile_manager()
+    profile = manager.get_profile(profile_name)
+
+    if not profile:
+        console.print(f"\n[red]✗ Profile '{profile_name}' not found[/red]")
+        console.print("[dim]Use 'profiles' to see available profiles[/dim]")
+        return
+
+    # Create info panel
+    info_lines = []
+    info_lines.append(f"[bold]{profile.name}[/bold]")
+    info_lines.append(f"{profile.description}")
+    info_lines.append("")
+
+    if profile.sitemap_url:
+        info_lines.append(f"[cyan]Sitemap:[/cyan] {profile.sitemap_url}")
+        if profile.url_filter:
+            info_lines.append(f"[cyan]Filter:[/cyan] {profile.url_filter}")
+        info_lines.append(f"[dim]URLs will be auto-discovered from sitemap[/dim]")
+    elif profile.urls:
+        info_lines.append(f"[cyan]URL List:[/cyan] {len(profile.urls)} URLs")
+        info_lines.append("")
+        info_lines.append("[dim]URLs:[/dim]")
+        for url in profile.urls[:10]:
+            info_lines.append(f"  • {url}")
+        if len(profile.urls) > 10:
+            info_lines.append(f"  [dim]... and {len(profile.urls) - 10} more[/dim]")
+
+    info_lines.append("")
+    info_lines.append(f"[yellow]Max Concurrent:[/yellow] {profile.max_concurrent}")
+
+    console.print(Panel("\n".join(info_lines), title=f"Profile: {profile.name}", border_style="cyan"))
+
+
 def show_crawled_history():
     """Display crawled documentation history."""
     tracker = get_crawl_tracker()
@@ -571,11 +721,31 @@ def main():
                 parts = query.split()
 
                 if len(parts) < 2:
-                    console.print("[red]Usage: crawl <url> | crawl --batch <file> | crawl --sitemap <url>[/red]")
+                    console.print("[red]Usage: crawl <url> | crawl --profile <name> | crawl --batch <file> | crawl --sitemap <url>[/red]")
                     continue
 
+                # Check for profile mode
+                if "--profile" in parts:
+                    profile_idx = parts.index("--profile")
+                    if profile_idx + 1 < len(parts):
+                        profile_name = parts[profile_idx + 1]
+
+                        # Extract --parallel option
+                        max_concurrent = None
+                        if "--parallel" in parts:
+                            parallel_idx = parts.index("--parallel")
+                            if parallel_idx + 1 < len(parts):
+                                try:
+                                    max_concurrent = int(parts[parallel_idx + 1])
+                                except ValueError:
+                                    pass
+
+                        run_profile_crawl(profile_name, max_concurrent=max_concurrent)
+                    else:
+                        console.print("[red]Usage: crawl --profile <name> [--parallel N][/red]")
+
                 # Check for batch mode
-                if "--batch" in parts:
+                elif "--batch" in parts:
                     batch_idx = parts.index("--batch")
                     if batch_idx + 1 < len(parts):
                         file_path = parts[batch_idx + 1]
@@ -633,6 +803,22 @@ def main():
 
             elif query.lower() == "crawled":
                 show_crawled_history()
+                continue
+
+            elif query.lower().startswith("profiles"):
+                # Parse profiles command
+                parts = query.split()
+
+                if len(parts) == 1:
+                    # Show all profiles
+                    show_profiles()
+                elif len(parts) >= 3 and parts[1] == "--info":
+                    # Show specific profile info
+                    profile_name = parts[2]
+                    show_profile_info(profile_name)
+                else:
+                    console.print("[red]Usage: profiles | profiles --info <name>[/red]")
+
                 continue
 
             elif query.lower() == 'clear':
