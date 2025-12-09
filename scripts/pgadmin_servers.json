@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "AI Agent Local",
+      "Group": "Development",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "ai_agent",
+      "Username": "ai_agent_user",
+      "SSLMode": "prefer",
+      "Comment": "Local development database for AI Coding Agent"
+    }
+  }
+}

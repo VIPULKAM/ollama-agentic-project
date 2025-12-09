@@ -1,6 +1,7 @@
 """CLI interface for AI Coding Agent."""
 
 import sys
+from typing import List
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -22,7 +23,11 @@ from ..rag.index_manager import (
 from ..rag.batch_crawler import (
     batch_crawl_from_file,
     batch_crawl_from_sitemap,
-    BatchCrawlResult
+    crawl_multiple_profiles,
+    crawl_stack,
+    list_stacks,
+    BatchCrawlResult,
+    MultiProfileCrawlResult
 )
 from ..rag.crawl_profiles import get_profile_manager
 import asyncio
@@ -52,11 +57,14 @@ def print_welcome():
 - **Documentation Crawling:**
   - `crawl <url>` - Crawl and index a single documentation URL
   - `crawl --profile <name> [--parallel N]` - Crawl using a pre-configured profile
+  - `crawl --profiles name1,name2,... [--parallel N]` - Crawl multiple profiles
+  - `crawl --stack <name> [--parallel N]` - Crawl a predefined stack (backend, frontend, fullstack)
   - `crawl --batch <file> [--parallel N]` - Batch crawl URLs from file
   - `crawl --sitemap <url> [--filter pattern] [--parallel N]` - Crawl from sitemap
   - `crawled` - Show crawled documentation history
   - `profiles` - List all available crawl profiles
   - `profiles --info <name>` - Show details about a specific profile
+  - `stacks` - List all available stacks
 - `clear` - Clear conversation history
 - `info` - Show model information
 - `help` - Show this help message
@@ -574,6 +582,166 @@ def show_profile_info(profile_name: str):
     console.print(Panel("\n".join(info_lines), title=f"Profile: {profile.name}", border_style="cyan"))
 
 
+def run_multi_profile_crawl(profile_names: List[str], max_concurrent: int = 5):
+    """Crawl multiple profiles."""
+    console.print(f"\n[yellow]Crawling {len(profile_names)} profiles...[/yellow]")
+    console.print(f"[dim]Profiles: {', '.join(profile_names)}[/dim]")
+    console.print(f"[dim]Max concurrent: {max_concurrent}[/dim]\n")
+
+    try:
+        result = asyncio.run(crawl_multiple_profiles(
+            profile_names,
+            max_concurrent=max_concurrent,
+            show_progress=True
+        ))
+
+        # Display overall results
+        console.print(f"\n[green]✓ Multi-profile crawl complete![/green]")
+
+        table = Table(title="Overall Results", show_header=True)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="white")
+
+        table.add_row("Profiles Crawled", f"{result.successful_profiles}/{result.total_profiles}")
+        table.add_row("Total URLs", str(result.total_urls))
+        table.add_row("Successful", f"[green]{result.successful_urls}[/green]")
+        table.add_row("Failed", f"[red]{result.failed_urls}[/red]")
+        table.add_row("Skipped (already crawled)", f"[blue]{result.skipped_urls}[/blue]")
+        table.add_row("Duration", f"{result.duration_seconds:.1f}s")
+
+        console.print(table)
+
+        # Show per-profile results
+        console.print(f"\n[bold]Per-Profile Results:[/bold]\n")
+
+        profile_table = Table(show_header=True)
+        profile_table.add_column("Profile", style="cyan", width=20)
+        profile_table.add_column("URLs", justify="right", style="white")
+        profile_table.add_column("✓", justify="right", style="green")
+        profile_table.add_column("✗", justify="right", style="red")
+        profile_table.add_column("⊙", justify="right", style="blue")
+        profile_table.add_column("Status", style="yellow")
+
+        for prof_result in result.profile_results:
+            if prof_result.error:
+                status = f"[red]Failed: {prof_result.error}[/red]"
+                urls = "-"
+                success = "-"
+                failed = "-"
+                skipped = "-"
+            else:
+                status = "[green]Success[/green]"
+                urls = str(prof_result.batch_result.total_urls)
+                success = str(prof_result.batch_result.successful)
+                failed = str(prof_result.batch_result.failed)
+                skipped = str(prof_result.batch_result.skipped)
+
+            profile_table.add_row(
+                prof_result.profile_name,
+                urls,
+                success,
+                failed,
+                skipped,
+                status
+            )
+
+        console.print(profile_table)
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Multi-profile crawl failed: {e}[/red]")
+
+
+def run_stack_crawl(stack_name: str, max_concurrent: int = 5):
+    """Crawl a predefined stack of profiles."""
+    console.print(f"\n[yellow]Crawling stack: {stack_name}[/yellow]")
+    console.print(f"[dim]Max concurrent: {max_concurrent}[/dim]\n")
+
+    try:
+        result = asyncio.run(crawl_stack(
+            stack_name,
+            max_concurrent=max_concurrent,
+            show_progress=True
+        ))
+
+        # Display overall results
+        console.print(f"\n[green]✓ Stack crawl complete![/green]")
+
+        table = Table(title=f"Stack Results: {stack_name}", show_header=True)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="white")
+
+        table.add_row("Profiles Crawled", f"{result.successful_profiles}/{result.total_profiles}")
+        table.add_row("Total URLs", str(result.total_urls))
+        table.add_row("Successful", f"[green]{result.successful_urls}[/green]")
+        table.add_row("Failed", f"[red]{result.failed_urls}[/red]")
+        table.add_row("Skipped (already crawled)", f"[blue]{result.skipped_urls}[/blue]")
+        table.add_row("Duration", f"{result.duration_seconds:.1f}s")
+
+        console.print(table)
+
+        # Show per-profile results
+        console.print(f"\n[bold]Profiles Crawled:[/bold]\n")
+
+        profile_table = Table(show_header=True)
+        profile_table.add_column("Profile", style="cyan", width=20)
+        profile_table.add_column("URLs", justify="right", style="white")
+        profile_table.add_column("Success", justify="right", style="green")
+        profile_table.add_column("Failed", justify="right", style="red")
+        profile_table.add_column("Status", style="yellow")
+
+        for prof_result in result.profile_results:
+            if prof_result.error:
+                status = f"[red]Error[/red]"
+                urls = "-"
+                success = "-"
+                failed = "-"
+            else:
+                status = "[green]✓[/green]"
+                urls = str(prof_result.batch_result.total_urls)
+                success = str(prof_result.batch_result.successful)
+                failed = str(prof_result.batch_result.failed)
+
+            profile_table.add_row(
+                prof_result.profile_name,
+                urls,
+                success,
+                failed,
+                status
+            )
+
+        console.print(profile_table)
+
+    except ValueError as e:
+        console.print(f"\n[red]✗ {e}[/red]")
+    except Exception as e:
+        console.print(f"\n[red]✗ Stack crawl failed: {e}[/red]")
+
+
+def show_stacks():
+    """Display all available stacks."""
+    stacks = list_stacks()
+
+    console.print(f"\n[bold cyan]Available Stacks ({len(stacks)})[/bold cyan]\n")
+
+    table = Table(show_header=True)
+    table.add_column("Stack", style="cyan", width=15)
+    table.add_column("Profiles", style="white", width=60)
+    table.add_column("Count", justify="right", style="green")
+
+    for stack_name, profile_names in sorted(stacks.items()):
+        profiles_str = ", ".join(profile_names)
+        table.add_row(
+            stack_name,
+            profiles_str,
+            str(len(profile_names))
+        )
+
+    console.print(table)
+
+    console.print("\n[dim]Usage: crawl --stack <name> [--parallel N][/dim]")
+    console.print("[dim]Example: crawl --stack backend[/dim]")
+
+
 def show_crawled_history():
     """Display crawled documentation history."""
     tracker = get_crawl_tracker()
@@ -724,8 +892,50 @@ def main():
                     console.print("[red]Usage: crawl <url> | crawl --profile <name> | crawl --batch <file> | crawl --sitemap <url>[/red]")
                     continue
 
+                # Check for multi-profiles mode
+                if "--profiles" in parts:
+                    profiles_idx = parts.index("--profiles")
+                    if profiles_idx + 1 < len(parts):
+                        # Parse comma-separated profile names
+                        profiles_str = parts[profiles_idx + 1]
+                        profile_names = [p.strip() for p in profiles_str.split(',')]
+
+                        # Extract --parallel option
+                        max_concurrent = 5
+                        if "--parallel" in parts:
+                            parallel_idx = parts.index("--parallel")
+                            if parallel_idx + 1 < len(parts):
+                                try:
+                                    max_concurrent = int(parts[parallel_idx + 1])
+                                except ValueError:
+                                    pass
+
+                        run_multi_profile_crawl(profile_names, max_concurrent=max_concurrent)
+                    else:
+                        console.print("[red]Usage: crawl --profiles name1,name2,... [--parallel N][/red]")
+
+                # Check for stack mode
+                elif "--stack" in parts:
+                    stack_idx = parts.index("--stack")
+                    if stack_idx + 1 < len(parts):
+                        stack_name = parts[stack_idx + 1]
+
+                        # Extract --parallel option
+                        max_concurrent = 5
+                        if "--parallel" in parts:
+                            parallel_idx = parts.index("--parallel")
+                            if parallel_idx + 1 < len(parts):
+                                try:
+                                    max_concurrent = int(parts[parallel_idx + 1])
+                                except ValueError:
+                                    pass
+
+                        run_stack_crawl(stack_name, max_concurrent=max_concurrent)
+                    else:
+                        console.print("[red]Usage: crawl --stack <name> [--parallel N][/red]")
+
                 # Check for profile mode
-                if "--profile" in parts:
+                elif "--profile" in parts:
                     profile_idx = parts.index("--profile")
                     if profile_idx + 1 < len(parts):
                         profile_name = parts[profile_idx + 1]
@@ -819,6 +1029,10 @@ def main():
                 else:
                     console.print("[red]Usage: profiles | profiles --info <name>[/red]")
 
+                continue
+
+            elif query.lower() == 'stacks':
+                show_stacks()
                 continue
 
             elif query.lower() == 'clear':

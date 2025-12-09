@@ -905,6 +905,276 @@ Note: Some tests require Ollama to be running (`ollama serve`) and the model to 
       - Profile configurations persist across sessions
     - ✅ **Total Test Count**: 328 tests (303 existing + 25 profiles)
 
+24. **PostgreSQL + pgvector Dual-Mode Storage** ⚠️ IN PROGRESS (Dec 8, 2024)
+    - **Goal**: Migrate RAG system from FAISS-only to dual-mode (FAISS + PostgreSQL)
+    - **Architecture**: Strategy pattern with abstract `StorageBackend` interface
+    - **Priority**: Batch crawling performance with transactional safety
+    - **Backward Compatibility**: FAISS remains default (no breaking changes)
+
+    **✅ Phase 1: Foundation (COMPLETE)**
+    - ✅ Created `src/rag/storage_backend.py` (260 lines)
+      - Abstract `StorageBackend` interface with 6 core methods
+      - `SearchResult` dataclass for unified results
+      - Custom exceptions: `StorageBackendError`, `IndexNotFoundError`, `IndexBuildError`, `SearchError`
+      - Methods: `index_exists()`, `build_index()`, `add_chunks()`, `search()`, `get_stats()`, `clear()`
+    - ✅ Created `src/rag/backend_factory.py` (180 lines)
+      - `get_storage_backend()` - Singleton factory with lazy loading
+      - Selects FAISS or PostgreSQL based on `ENABLE_POSTGRES_STORAGE` flag
+      - Helper functions: `reset_backend()`, `get_backend_type()`, `is_backend_initialized()`
+    - ✅ Created `scripts/init_postgres_schema.sql` (370 lines)
+      - Tables: `code_chunks`, `crawled_urls`, `index_metadata`, `crawl_sessions`
+      - pgvector column: `embedding vector(384)` for sentence-transformers/all-MiniLM-L6-v2
+      - HNSW indexes for fast vector similarity search (m=16, ef_construction=64)
+      - Helper functions: `update_index_stats()`, `search_similar_chunks()`, `truncate_all_tables()`
+      - Views: `v_index_statistics`, `v_crawl_statistics`
+    - ✅ Updated `src/config/settings.py` with PostgreSQL configuration:
+      - `ENABLE_POSTGRES_STORAGE: bool = False` (defaults to FAISS)
+      - `DATABASE_URL`, `DB_POOL_SIZE`, `DB_CONNECTION_TIMEOUT`
+      - `PGVECTOR_INDEX_TYPE`, `PGVECTOR_HNSW_M`, `PGVECTOR_HNSW_EF_CONSTRUCTION`
+      - `BATCH_CRAWL_MAX_CONCURRENT`, `BATCH_CRAWL_SKIP_DUPLICATES`
+    - ✅ Updated `requirements.txt`: Added `psycopg2-binary==2.9.9`
+
+    **✅ Phase 3: PostgreSQL Backend (COMPLETE)**
+    - ✅ Created `src/rag/postgres_backend.py` (540 lines)
+      - `PostgresBackend` class implementing `StorageBackend` interface
+      - Connection pooling with `ThreadedConnectionPool` (configurable pool size)
+      - `build_index()` - Bulk insert with `execute_batch` (100 chunks/batch)
+      - `add_chunks()` - Incremental indexing (INSERT without TRUNCATE)
+      - `search()` - pgvector similarity using `<->` operator for L2 distance
+      - `get_stats()` - Comprehensive statistics (chunks, files, sizes in MB)
+      - `clear()` - TRUNCATE all tables
+      - `delete_by_file()` - Delete chunks from specific file
+      - Transaction safety: ACID guarantees, automatic rollback on errors
+      - Resource management: Context managers, connection cleanup
+
+    **⏸️ Phase 2: FAISS Adapter (PENDING - Waiting for Profiling Work)**
+    - ⏸️ Create `src/rag/faiss_backend.py` - Wrap existing FAISS logic
+    - ⏸️ Refactor `src/rag/indexer.py` to use `get_storage_backend()`
+    - ⏸️ Refactor `src/rag/retriever.py` to use `get_storage_backend()`
+    - ⏸️ Run all 328 tests to verify backward compatibility
+    - **Why Waiting**: Avoids conflicts with concurrent profiling work on indexer.py/retriever.py
+
+    **🔜 Remaining Phases (After Phase 2)**
+    - Phase 4: Batch crawler for PostgreSQL (concurrent crawling with transactions)
+    - Phase 5: Migration scripts (FAISS ↔ PostgreSQL conversion)
+    - Phase 6: Integration testing (50+ new tests for PostgreSQL mode)
+    - Phase 7: Documentation (setup guide, migration guide, performance comparison)
+
+    **Current Status**:
+    - ✅ PostgreSQL backend fully implemented and ready
+    - ✅ Dual-mode architecture designed and partially implemented
+    - ⏸️ Integration pending (Phase 2) - waiting for profiling work to complete
+    - 🔧 Configuration: `ENABLE_POSTGRES_STORAGE=False` (FAISS mode, default)
+    - **Timeline**: ~2 weeks remaining (Phase 2-7) after profiling completes
+
+25. **Multi-Profile Batch Crawling & Stacks** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Enhanced `src/rag/batch_crawler.py` with multi-profile support (~200 lines added)
+    - ✅ Implemented **Multi-Profile Crawling**:
+      - `crawl_multiple_profiles()` - Crawl multiple profiles sequentially
+        - Sequential crawling (one profile at a time for simplicity)
+        - Aggregates statistics across all profiles
+        - Per-profile error handling (continues on failure)
+        - Returns `MultiProfileCrawlResult` with detailed breakdown
+      - `ProfileCrawlResult` dataclass - Individual profile results
+      - `MultiProfileCrawlResult` dataclass - Aggregated results
+        - total_profiles, successful_profiles, failed_profiles
+        - total_urls, successful_urls, failed_urls, skipped_urls
+        - duration_seconds, profile_results list
+    - ✅ Implemented **Predefined Stacks** for common tech stacks:
+      - `PROFILE_STACKS` dictionary with 7 stacks:
+        - **backend**: fastapi, django, flask, postgresql
+        - **frontend**: react, vue, typescript
+        - **fullstack**: fastapi, django, react, vue, typescript, postgresql
+        - **python**: python-stdlib, fastapi, django, flask
+        - **javascript**: react, vue, express, typescript
+        - **database**: postgresql
+        - **ai**: langchain
+      - `crawl_stack()` - Crawl all profiles in a predefined stack
+      - `get_stack_profiles()` - Get profile names for a stack
+      - `list_stacks()` - List all available stacks
+    - ✅ Enhanced **CLI Integration** in `src/cli/main.py`:
+      - `crawl --profiles name1,name2,... [--parallel N]` - Multi-profile crawling
+      - `crawl --stack <name> [--parallel N]` - Stack crawling
+      - `stacks` - List all available stacks
+      - `run_multi_profile_crawl()` - Rich console output with tables
+      - `run_stack_crawl()` - Stack-specific output
+      - `show_stacks()` - Display all stacks in formatted table
+    - ✅ Added **Progress Tracking**:
+      - tqdm progress bar for profiles (e.g., "Crawling profiles: 2/5")
+      - Dynamic description showing current profile being crawled
+      - Fallback when tqdm not available
+    - ✅ Comprehensive test suite: `tests/test_rag/test_batch_crawler.py`
+      - Added `TestMultiProfileCrawling` class with 6 tests
+      - Tests for successful multi-profile crawling
+      - Tests for handling profile failures gracefully
+      - Tests for stack crawling (valid and invalid stacks)
+      - Tests for stack utility functions
+      - All tests passing
+    - ✅ **Benefits**:
+      - **Time Saving**: Crawl entire tech stacks in one command
+      - **Convenience**: No need to run multiple crawl commands
+      - **Standardization**: Predefined stacks ensure consistent documentation coverage
+      - **Flexibility**: Can combine profiles or use pre-made stacks
+      - **Error Resilience**: Failed profiles don't stop entire batch
+      - **Visibility**: Detailed statistics for each profile and overall
+    - ✅ **Usage Examples**:
+      ```bash
+      # Crawl multiple individual profiles
+      crawl --profiles fastapi,django,react --parallel 10
+
+      # Crawl a predefined stack
+      crawl --stack backend --parallel 5
+      crawl --stack fullstack --parallel 10
+
+      # List available stacks
+      stacks
+      ```
+    - ✅ **Total Test Count**: 334 tests (328 existing + 6 multi-profile)
+
+26. **Local PostgreSQL Development Setup** ✅ COMPLETE (Dec 9, 2024)
+    - ✅ Created comprehensive Docker-based PostgreSQL setup for team collaboration
+    - ✅ **Docker Compose Configuration** (`docker-compose.yml`):
+      - PostgreSQL 16 with pgvector extension (`pgvector/pgvector:pg16` image)
+      - Automatic schema initialization on first startup
+      - Health checks and restart policies
+      - Optional pgAdmin 4 service (with `--profile with-pgadmin`)
+      - Persistent volumes for data and pgAdmin settings
+      - Pre-configured server connections for pgAdmin
+      - Isolated network for services
+    - ✅ **Database Initialization** (`scripts/`):
+      - `init_postgres_schema.sql` - Auto-mounted, runs on first startup (existing, 370 lines)
+      - `seed_data.sql` - Optional sample data and startup messages (NEW, 30 lines)
+      - `pgadmin_servers.json` - Pre-configured pgAdmin server connection (NEW)
+    - ✅ **Utility Scripts** (`scripts/`):
+      - `setup_postgres.sh` - One-command setup script (checks Docker, starts services, tests connection)
+      - `test_postgres_connection.py` - Comprehensive connection and schema verification
+        - Tests: connection, pgvector extension, tables, views, vector operations
+        - Detailed output with troubleshooting suggestions
+      - `show_postgres_stats.py` - Database statistics dashboard
+        - Index stats, crawl stats, table sizes, recent activity, connection info
+        - Formatted tables with Rich console output
+      - `clean_postgres_db.py` - Interactive database cleaning utility
+        - Options: clean all, clean chunks only, vacuum, show stats
+        - Safety confirmations for destructive operations
+      - All scripts are executable (`chmod +x`)
+    - ✅ **Documentation**:
+      - `POSTGRES_QUICKSTART.md` - 5-minute quick start for team members (NEW, concise)
+      - `docs/POSTGRES_SETUP.md` - Comprehensive setup and troubleshooting guide (NEW, 400 lines)
+        - Quick start (3 steps)
+        - Connection details and database schema
+        - pgAdmin access instructions
+        - Common operations (backup, restore, reset, view logs)
+        - Troubleshooting section
+        - Development workflow guide
+        - Security notes (dev vs production)
+      - Updated `.env.example` - Added PostgreSQL configuration section (NEW)
+        - `ENABLE_POSTGRES_STORAGE`, `DATABASE_URL`, connection pool settings
+        - pgvector index configuration (HNSW parameters)
+        - Batch crawling settings
+        - Quick start instructions in comments
+    - ✅ **Connection Details** (for local development):
+      - Host: localhost, Port: 5432
+      - Database: ai_agent, User: ai_agent_user
+      - Password: dev_password_change_in_production (⚠️ dev only!)
+      - Connection string: `postgresql://ai_agent_user:dev_password_change_in_production@localhost:5432/ai_agent`
+    - ✅ **pgAdmin Access** (optional):
+      - URL: http://localhost:5050
+      - Login: admin@aiagent.local / admin
+      - Pre-configured server: "AI Agent Local"
+    - ✅ **Features**:
+      - **Zero-Config Setup**: `./scripts/setup_postgres.sh` handles everything
+      - **Team Consistency**: Docker ensures identical environment across team members
+      - **Isolated Environment**: No conflicts with system PostgreSQL
+      - **Persistent Data**: Database survives container restarts
+      - **Easy Reset**: `docker-compose down -v` for clean slate
+      - **Monitoring Tools**: Stats dashboard and pgAdmin UI
+      - **Safety First**: Confirmations for destructive operations
+    - ✅ **Benefits for Team**:
+      - **Fast Onboarding**: New team members setup in 5 minutes
+      - **No Installation Required**: Just Docker (no PostgreSQL install needed)
+      - **Consistent Environment**: Same version, extensions, schema for everyone
+      - **Easy Debugging**: Logs, stats, and pgAdmin for troubleshooting
+      - **Safe Testing**: Local isolated database, can reset anytime
+      - **Production Parity**: Same PostgreSQL 16 + pgvector as production
+    - ✅ **Usage**:
+      ```bash
+      # One-line setup
+      ./scripts/setup_postgres.sh
+
+      # Or manual
+      docker-compose up -d postgres
+      python scripts/test_postgres_connection.py
+      python scripts/show_postgres_stats.py
+
+      # With pgAdmin
+      docker-compose --profile with-pgadmin up -d
+      # Access: http://localhost:5050
+      ```
+    - ✅ **Supports Other Team Member's Work**:
+      - Ready for PostgreSQL backend integration (Phase 2)
+      - Compatible with existing postgres_backend.py implementation
+      - Schema matches init_postgres_schema.sql (370 lines, 4 tables, views, functions)
+      - Enables concurrent development and testing
+      - No conflicts with FAISS mode (dual-mode architecture)
+    - ✅ **Installation & Deployment** (Dec 9, 2024):
+      - **Docker Installation**: Completed on Fedora 42
+        - Installed Docker 29.0.4 and Docker Compose 2.40.3
+        - Configured user group permissions
+        - Started and enabled Docker service
+      - **PostgreSQL Container**: Successfully deployed and running
+        - Container: `ai-agent-postgres` (healthy status)
+        - Image: `pgvector/pgvector:pg16` (PostgreSQL 16.11 with pgvector)
+        - Port: 5432 (exposed on localhost)
+        - Network: `ai-agent-network` (isolated)
+        - Volume: `ai-agent-postgres-data` (persistent storage)
+      - **Database Schema**: Fully initialized
+        - Tables: `code_chunks`, `crawled_urls`, `index_metadata`, `crawl_sessions` ✅
+        - Views: `v_index_statistics`, `v_crawl_statistics` ✅
+        - pgvector extension: Enabled ✅
+        - Helper functions: All created ✅
+        - Vector dimension: 384 (sentence-transformers/all-MiniLM-L6-v2)
+      - **Connection Tested**: All verifications passed ✅
+        - Connection successful to localhost:5432
+        - Authentication working (ai_agent_user)
+        - All tables accessible
+        - Vector operations functional
+        - Test script: `scripts/test_postgres_connection.py` passed
+      - **Dependencies**: Installed
+        - `psycopg2-binary==2.9.11` (Python PostgreSQL adapter)
+      - **Configuration**: Updated
+        - `.env` file updated with `DATABASE_URL`
+        - `ENABLE_POSTGRES_STORAGE=false` (default to FAISS, can switch to PostgreSQL)
+      - **Issue Resolved**: File permissions
+        - Initial auto-init failed due to permission denied on mounted SQL file
+        - Resolved by manually running: `docker-compose exec -T postgres psql -U ai_agent_user -d ai_agent < scripts/init_postgres_schema.sql`
+        - Schema fully initialized and operational
+      - **Status Documents**: Created for team reference
+        - `POSTGRES_READY.md` - Deployment summary and quick commands
+        - `SETUP_STATUS.md` - Detailed setup checklist
+    - ✅ **Current Status** (Dec 9, 2024):
+      - 🟢 **OPERATIONAL**: PostgreSQL database is running and ready for use
+      - 🟢 **TESTED**: Connection and schema verified
+      - 🟢 **DOCUMENTED**: Complete setup and usage guides
+      - 🟢 **TEAM-READY**: Other team members can connect immediately
+      - ⏭️ **Next Step**: Enable in application by setting `ENABLE_POSTGRES_STORAGE=true` in `.env`
+    - ✅ **Access Commands**:
+      ```bash
+      # Check status
+      sudo docker-compose ps postgres
+
+      # Test connection
+      python3 scripts/test_postgres_connection.py
+
+      # View statistics
+      python3 scripts/show_postgres_stats.py
+
+      # Connect with psql
+      sudo docker-compose exec postgres psql -U ai_agent_user -d ai_agent
+
+      # View logs
+      sudo docker-compose logs -f postgres
+      ```
+
 ## Future Enhancements (as documented)
 
 From ARCHITECTURE.md roadmap:
@@ -950,6 +1220,10 @@ ollama-agentic-project/
 │   │   ├── chunker.py            # Code & text chunking (✅ COMPLETE)
 │   │   ├── indexer.py            # FAISS index building (✅ COMPLETE)
 │   │   ├── retriever.py          # Semantic search (✅ COMPLETE)
+│   │   ├── storage_backend.py    # Abstract storage interface (✅ COMPLETE - NEW)
+│   │   ├── backend_factory.py    # Backend factory (FAISS/PostgreSQL) (✅ COMPLETE - NEW)
+│   │   ├── postgres_backend.py   # PostgreSQL + pgvector backend (✅ COMPLETE - NEW)
+│   │   ├── faiss_backend.py      # FAISS backend adapter (⏸️ PENDING - Phase 2)
 │   │   ├── web_crawler.py        # CrawlAI web documentation (✅ COMPLETE)
 │   │   ├── crawl_tracker.py      # URL tracking & deduplication (✅ COMPLETE)
 │   │   ├── index_manager.py      # Index management utilities (✅ COMPLETE)
@@ -983,7 +1257,10 @@ ollama-agentic-project/
 │       └── test_crawl_profiles.py      # ✅ NEW (25 tests)
 ├── scripts/
 │   ├── benchmark_models.py       # Model comparison
-│   └── test_react_format.py      # ReAct validation (✅ PASSED)
+│   ├── test_react_format.py      # ReAct validation (✅ PASSED)
+│   ├── init_postgres_schema.sql  # PostgreSQL + pgvector schema (✅ COMPLETE - NEW)
+│   ├── migrate_faiss_to_postgres.py  # Migration tool (🔜 Phase 5)
+│   └── export_postgres_to_faiss.py   # Export tool (🔜 Phase 5)
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── DEPLOYMENT_ANALYSIS.md

@@ -12,6 +12,7 @@ from ..config.settings import settings
 from .embeddings import get_embeddings, get_embedding_dimension
 from .chunker import chunk_file, CodeChunk
 from .indexer_utils import file_discovery_generator, FileInfo
+from .backend_factory import get_storage_backend
 
 # Configure logging
 logger = logging.getLogger("ai_agent.indexer")
@@ -71,15 +72,48 @@ def build_index(
     if index_path is None:
         index_path = Path(settings.FAISS_INDEX_PATH).expanduser()
 
-    if not force_reindex and index_exists(index_path):
-        logger.info(f"Index already exists at {index_path}. Loading existing index.")
+    # Get storage backend
+    # For FAISS backend: if index_path is custom (not default), create a fresh backend
+    # instead of using singleton, so it saves to the correct location
+    backend = get_storage_backend()
+
+    backend_path_matches = True
+    if hasattr(backend, 'index_path'):
+        backend_path_matches = (backend.index_path == index_path)
+        if not backend_path_matches:
+            # Create a fresh backend with custom path for this build
+            logger.info(f"Creating fresh FAISS backend for custom path: {index_path}")
+            from .faiss_backend import FaissBackend
+            backend = FaissBackend(index_path=str(index_path))
+
+    if not force_reindex and backend.index_exists() and backend_path_matches:
+        logger.info(f"Index already exists at {index_path}. Loading existing index (use force_reindex=True to rebuild)")
+
+        # Load and return existing index for backward compatibility
         try:
-            index, chunks_metadata = load_index(index_path)
-            logger.info(f"Loaded existing index with {len(chunks_metadata)} chunks")
-            return index, chunks_metadata
-        except IndexError as e:
-            logger.warning(f"Failed to load existing index: {e}. Attempting to rebuild.")
-            # Fall through to rebuild if loading fails
+            from .faiss_backend import FaissBackend
+            if isinstance(backend, FaissBackend):
+                index, chunks_metadata = backend._load_index_from_disk()
+                # Convert metadata dicts to CodeChunk objects
+                chunks = []
+                for meta in chunks_metadata:
+                    chunks.append(CodeChunk(
+                        content=meta["content"],
+                        file_path=Path(meta["file_path"]),
+                        start_line=meta["start_line"],
+                        end_line=meta["end_line"],
+                        chunk_type=meta.get("chunk_type", "text"),
+                        language=meta.get("language", "unknown"),
+                        metadata=meta.get("metadata")
+                    ))
+                return index, chunks
+            else:
+                # For PostgreSQL or other backends, return dummy values
+                logger.info("Non-FAISS backend detected. Index already exists.")
+                return None, []
+        except Exception as e:
+            logger.warning(f"Failed to load existing index: {e}. Will rebuild.")
+            # Fall through to normal build process
 
     logger.info(f"Starting index build for {cwd}")
     logger.info(f"Index will be saved to {index_path}")
@@ -153,28 +187,29 @@ def build_index(
 
         logger.info(f"Generated {len(embeddings)} embeddings")
 
-        # Step 4: Build FAISS index
-        logger.info("Building FAISS index...")
+        # Step 4-5: Build index using configured backend
+        logger.info("Building index using configured backend...")
+        logger.info(f"Using backend: {backend.__class__.__name__}")
 
-        # Get embedding dimension
-        embedding_dim = get_embedding_dimension()
-        logger.debug(f"Embedding dimension: {embedding_dim}")
+        # Build index using backend
+        num_indexed = backend.build_index(
+            chunks=all_chunks,
+            embeddings=embeddings,
+            force_reindex=force_reindex
+        )
 
-        # Create FAISS index (using IndexFlatL2 for now)
-        # For cosine similarity with normalized embeddings, L2 distance is equivalent
-        index = faiss.IndexFlatL2(embedding_dim)
+        logger.info(f"Index built with {num_indexed} chunks")
 
-        # Convert embeddings to numpy array
-        embeddings_array = np.array(embeddings, dtype=np.float32)
-
-        # Add embeddings to index
-        index.add(embeddings_array)
-
-        logger.info(f"FAISS index built with {index.ntotal} vectors")
-
-        # Step 5: Save index and metadata
-        logger.info("Saving index and metadata...")
-        save_index(index, all_chunks, index_path)
+        # For backward compatibility, try to get FAISS index if using FAISS backend
+        index = None
+        if hasattr(backend, '_index') and backend._index is not None:
+            index = backend._index
+        else:
+            # For non-FAISS backends, create a dummy index for compatibility
+            # This shouldn't be used in practice but maintains the return type
+            logger.debug("Non-FAISS backend in use, index object not available")
+            embedding_dim = get_embedding_dimension()
+            index = faiss.IndexFlatL2(embedding_dim)  # Empty dummy index
 
         end_time = time.time()
         time_taken = end_time - start_time
@@ -307,10 +342,14 @@ def load_index(index_path: Optional[Path] = None) -> Tuple[faiss.Index, List[dic
 
 
 def index_exists(index_path: Optional[Path] = None) -> bool:
-    """Check if index exists at the specified path.
+    """Check if index exists using the configured backend.
+
+    Note: This now uses the storage backend (FAISS or PostgreSQL).
+    The index_path parameter is ignored for PostgreSQL backend.
 
     Args:
         index_path: Directory path to check (default: from settings)
+                   Only used for FAISS backend
 
     Returns:
         bool: True if index exists, False otherwise
@@ -318,7 +357,12 @@ def index_exists(index_path: Optional[Path] = None) -> bool:
     if index_path is None:
         index_path = Path(settings.FAISS_INDEX_PATH).expanduser()
 
-    index_file = index_path / "index.faiss"
-    metadata_file = index_path / "chunks_metadata.json"
+    backend = get_storage_backend()
 
-    return index_file.exists() and metadata_file.exists()
+    # If custom path provided and different from backend's path, create fresh backend
+    if hasattr(backend, 'index_path'):
+        if backend.index_path != index_path:
+            from .faiss_backend import FaissBackend
+            backend = FaissBackend(index_path=str(index_path))
+
+    return backend.index_exists()

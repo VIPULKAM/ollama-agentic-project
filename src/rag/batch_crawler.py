@@ -17,6 +17,7 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 
 from .crawl_tracker import get_crawl_tracker
+from .crawl_profiles import get_profile_manager, CrawlProfile
 from ..agent.tools.crawl_and_index import get_crawl_and_index_tool
 from ..config.settings import settings
 
@@ -34,6 +35,29 @@ class BatchCrawlResult:
     urls_crawled: List[str]
     urls_failed: List[Dict[str, str]]  # {url, error}
     urls_skipped: List[str]
+
+
+@dataclass
+class ProfileCrawlResult:
+    """Result from crawling a single profile."""
+    profile_name: str
+    profile_description: str
+    batch_result: BatchCrawlResult
+    error: Optional[str] = None
+
+
+@dataclass
+class MultiProfileCrawlResult:
+    """Result from crawling multiple profiles."""
+    total_profiles: int
+    successful_profiles: int
+    failed_profiles: int
+    total_urls: int
+    successful_urls: int
+    failed_urls: int
+    skipped_urls: int
+    duration_seconds: float
+    profile_results: List[ProfileCrawlResult]
 
 
 class BatchCrawler:
@@ -336,3 +360,237 @@ async def batch_crawl_from_sitemap(
         )
     finally:
         await crawler.cleanup()
+
+
+# Predefined profile stacks for common use cases
+PROFILE_STACKS = {
+    "backend": [
+        "fastapi", "django", "flask", "postgresql"
+    ],
+    "frontend": [
+        "react", "vue", "typescript"
+    ],
+    "fullstack": [
+        "fastapi", "django", "react", "vue", "typescript", "postgresql"
+    ],
+    "python": [
+        "python-stdlib", "fastapi", "django", "flask"
+    ],
+    "javascript": [
+        "react", "vue", "express", "typescript"
+    ],
+    "database": [
+        "postgresql"
+    ],
+    "ai": [
+        "langchain"
+    ]
+}
+
+
+def get_stack_profiles(stack_name: str) -> Optional[List[str]]:
+    """Get profile names for a predefined stack.
+
+    Args:
+        stack_name: Name of the stack
+
+    Returns:
+        List of profile names, or None if stack not found
+    """
+    return PROFILE_STACKS.get(stack_name.lower())
+
+
+def list_stacks() -> Dict[str, List[str]]:
+    """Get all available stacks.
+
+    Returns:
+        Dict mapping stack names to profile lists
+    """
+    return PROFILE_STACKS.copy()
+
+
+async def crawl_multiple_profiles(
+    profile_names: List[str],
+    max_concurrent: int = 5,
+    show_progress: bool = True
+) -> MultiProfileCrawlResult:
+    """Crawl multiple profiles in sequence.
+
+    Args:
+        profile_names: List of profile names to crawl
+        max_concurrent: Max concurrent operations per profile
+        show_progress: Show progress indicators
+
+    Returns:
+        MultiProfileCrawlResult with aggregated statistics
+    """
+    start_time = datetime.now()
+
+    manager = get_profile_manager()
+    profile_results = []
+
+    total_urls = 0
+    successful_urls = 0
+    failed_urls = 0
+    skipped_urls = 0
+    successful_profiles = 0
+    failed_profiles = 0
+
+    logger.info(f"Starting multi-profile crawl: {', '.join(profile_names)}")
+
+    # Create progress iterator for profiles
+    if show_progress:
+        try:
+            from tqdm import tqdm
+            profile_iterator = tqdm(
+                profile_names,
+                desc="Crawling profiles",
+                unit="profile"
+            )
+        except ImportError:
+            profile_iterator = profile_names
+    else:
+        profile_iterator = profile_names
+
+    for profile_name in profile_iterator:
+        if show_progress and hasattr(profile_iterator, 'set_description'):
+            profile_iterator.set_description(f"Crawling profile: {profile_name}")
+
+        logger.info(f"Crawling profile: {profile_name}")
+
+        # Get profile
+        profile = manager.get_profile(profile_name)
+
+        if not profile:
+            logger.error(f"Profile not found: {profile_name}")
+            profile_results.append(ProfileCrawlResult(
+                profile_name=profile_name,
+                profile_description="Profile not found",
+                batch_result=BatchCrawlResult(
+                    total_urls=0,
+                    successful=0,
+                    failed=0,
+                    skipped=0,
+                    duration_seconds=0,
+                    urls_crawled=[],
+                    urls_failed=[],
+                    urls_skipped=[]
+                ),
+                error=f"Profile '{profile_name}' not found"
+            ))
+            failed_profiles += 1
+            continue
+
+        try:
+            # Crawl based on profile type
+            if profile.sitemap_url:
+                # Sitemap-based profile
+                result = await batch_crawl_from_sitemap(
+                    profile.sitemap_url,
+                    url_filter=profile.url_filter,
+                    max_concurrent=max_concurrent or profile.max_concurrent,
+                    show_progress=show_progress
+                )
+            elif profile.urls:
+                # URL list-based profile
+                result = await batch_crawl_urls(
+                    profile.urls,
+                    max_concurrent=max_concurrent or profile.max_concurrent,
+                    show_progress=show_progress
+                )
+            else:
+                raise ValueError(f"Profile '{profile_name}' has no URLs or sitemap")
+
+            # Aggregate statistics
+            total_urls += result.total_urls
+            successful_urls += result.successful
+            failed_urls += result.failed
+            skipped_urls += result.skipped
+            successful_profiles += 1
+
+            profile_results.append(ProfileCrawlResult(
+                profile_name=profile.name,
+                profile_description=profile.description,
+                batch_result=result,
+                error=None
+            ))
+
+            logger.info(
+                f"Profile '{profile_name}' complete: "
+                f"{result.successful}/{result.total_urls} URLs successful"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to crawl profile '{profile_name}': {e}")
+            profile_results.append(ProfileCrawlResult(
+                profile_name=profile.name,
+                profile_description=profile.description,
+                batch_result=BatchCrawlResult(
+                    total_urls=0,
+                    successful=0,
+                    failed=0,
+                    skipped=0,
+                    duration_seconds=0,
+                    urls_crawled=[],
+                    urls_failed=[],
+                    urls_skipped=[]
+                ),
+                error=str(e)
+            ))
+            failed_profiles += 1
+
+    duration = (datetime.now() - start_time).total_seconds()
+
+    logger.info(
+        f"Multi-profile crawl complete: "
+        f"{successful_profiles}/{len(profile_names)} profiles successful, "
+        f"{successful_urls}/{total_urls} URLs successful"
+    )
+
+    return MultiProfileCrawlResult(
+        total_profiles=len(profile_names),
+        successful_profiles=successful_profiles,
+        failed_profiles=failed_profiles,
+        total_urls=total_urls,
+        successful_urls=successful_urls,
+        failed_urls=failed_urls,
+        skipped_urls=skipped_urls,
+        duration_seconds=duration,
+        profile_results=profile_results
+    )
+
+
+async def crawl_stack(
+    stack_name: str,
+    max_concurrent: int = 5,
+    show_progress: bool = True
+) -> MultiProfileCrawlResult:
+    """Crawl a predefined stack of profiles.
+
+    Args:
+        stack_name: Name of the stack (e.g., "backend", "frontend", "fullstack")
+        max_concurrent: Max concurrent operations per profile
+        show_progress: Show progress indicators
+
+    Returns:
+        MultiProfileCrawlResult with aggregated statistics
+
+    Raises:
+        ValueError: If stack name is not found
+    """
+    profile_names = get_stack_profiles(stack_name)
+
+    if profile_names is None:
+        available = ', '.join(PROFILE_STACKS.keys())
+        raise ValueError(
+            f"Stack '{stack_name}' not found. "
+            f"Available stacks: {available}"
+        )
+
+    logger.info(f"Crawling stack '{stack_name}' with profiles: {', '.join(profile_names)}")
+
+    return await crawl_multiple_profiles(
+        profile_names,
+        max_concurrent=max_concurrent,
+        show_progress=show_progress
+    )

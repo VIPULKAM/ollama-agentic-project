@@ -63,6 +63,25 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = 50
     INDEX_SCHEMA_VERSION: int = 1  # Increment to force reindex
 
+    # PostgreSQL + pgvector Configuration (NEW)
+    ENABLE_POSTGRES_STORAGE: bool = False  # Default to FAISS for backward compatibility
+    DATABASE_URL: Optional[str] = None  # Format: postgresql://user:password@host:port/dbname
+    DB_POOL_SIZE: int = 10  # Connection pool size
+    DB_POOL_MAX_OVERFLOW: int = 20  # Max overflow connections
+    DB_CONNECTION_TIMEOUT: int = 30  # Connection timeout in seconds
+    DB_ECHO: bool = False  # Echo SQL queries (for debugging)
+
+    # pgvector Index Configuration
+    PGVECTOR_INDEX_TYPE: str = "hnsw"  # "hnsw" or "ivfflat"
+    PGVECTOR_HNSW_M: int = 16  # HNSW index parameter (links per node)
+    PGVECTOR_HNSW_EF_CONSTRUCTION: int = 64  # HNSW construction parameter
+    PGVECTOR_IVFFLAT_LISTS: int = 100  # IVFFlat lists parameter
+
+    # Batch Crawling Configuration (for PostgreSQL backend)
+    BATCH_CRAWL_MAX_CONCURRENT: int = 5  # Max concurrent crawl operations
+    BATCH_CRAWL_SKIP_DUPLICATES: bool = True  # Skip URLs with unchanged content
+    BATCH_CRAWL_TRANSACTION_SIZE: int = 100  # Commit every N chunks
+
     # File Operations Configuration (NEW)
     MAX_FILE_SIZE_MB: int = 10
     ALLOWED_EXTENSIONS: list = [".py", ".js", ".ts", ".md", ".json", ".yaml", ".yml", ".txt"]
