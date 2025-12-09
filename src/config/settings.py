@@ -1,6 +1,6 @@
 """Configuration settings for AI Coding Agent."""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Literal
 from pathlib import Path
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Claude/Anthropic Configuration
     ANTHROPIC_API_KEY: Optional[str] = None
-    CLAUDE_MODEL: str = "claude-3-haiku-20240307"  # Haiku is most cost-effective
+    CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"  # Latest Claude 3.5 Sonnet with tool calling
 
     # Gemini/Google Configuration
     GOOGLE_API_KEY: Optional[str] = None
@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     ENABLE_TOOLS: bool = True  # Feature flag - start disabled for gradual rollout
     ENABLE_FILE_OPS: bool = True
     ENABLE_RAG: bool = True
+    ENABLE_GIT_TOOLS: bool = True  # Enable Git integration tools
+    ENABLE_PLANNING: bool = False  # Explicitly disable planning due to missing modules
 
     # RAG Configuration (NEW)
     VECTOR_DB: str = "faiss"  # Using FAISS instead of ChromaDB (better Python 3.13 support)
@@ -92,10 +94,13 @@ class Settings(BaseSettings):
     LOG_FILE_OPERATIONS: bool = True
     LOG_LEVEL: str = "INFO"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    # Pydantic v2 configuration
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore"  # Ignore extra fields in .env
+    )
 
 
 # Global settings instance

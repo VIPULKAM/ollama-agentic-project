@@ -38,7 +38,7 @@ def build_index(
     index_path: Optional[Path] = None,
     show_progress: bool = True,
     batch_size: int = 32,
-) -> Dict[str, Any]:
+) -> Tuple[faiss.Index, List[CodeChunk]]:
     """Build FAISS index from codebase files.
 
     This function orchestrates the entire indexing process:
@@ -57,7 +57,7 @@ def build_index(
         batch_size: Number of chunks to embed at once (default: 32).
 
     Returns:
-        Dict[str, Any]: A dictionary containing indexing statistics.
+        Tuple[faiss.Index, List[CodeChunk]]: The built index and list of chunks.
 
     Raises:
         IndexBuildError: If index building fails.
@@ -74,14 +74,9 @@ def build_index(
     if not force_reindex and index_exists(index_path):
         logger.info(f"Index already exists at {index_path}. Loading existing index.")
         try:
-            _, chunks_metadata = load_index(index_path)
-            end_time = time.time()
-            return {
-                "files_indexed": 0, # Cannot easily determine from loaded metadata
-                "total_chunks": len(chunks_metadata),
-                "time_taken": end_time - start_time,
-                "loaded_from_cache": True
-            }
+            index, chunks_metadata = load_index(index_path)
+            logger.info(f"Loaded existing index with {len(chunks_metadata)} chunks")
+            return index, chunks_metadata
         except IndexError as e:
             logger.warning(f"Failed to load existing index: {e}. Attempting to rebuild.")
             # Fall through to rebuild if loading fails
@@ -186,15 +181,11 @@ def build_index(
 
         logger.info(
             f"Index build complete! "
-            f"{total_files} files, {total_chunks} chunks, {failed_files} failures"
+            f"{total_files} files, {total_chunks} chunks, {failed_files} failures, "
+            f"time: {time_taken:.2f}s"
         )
 
-        return {
-            "files_indexed": total_files,
-            "total_chunks": total_chunks,
-            "time_taken": time_taken,
-            "loaded_from_cache": False
-        }
+        return index, all_chunks
 
     except IndexBuildError:
         # Re-raise IndexBuildError

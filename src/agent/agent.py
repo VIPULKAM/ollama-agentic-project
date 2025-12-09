@@ -36,11 +36,11 @@ from .tools.git_tools import (
     get_git_log_tool,
 )
 
-# Import retry logic
-from .retry import wrap_tools_with_retry
+# Import retry logic (temporarily commented out due to missing file)
+# from .retry import wrap_tools_with_retry
 
-# Import planning logic
-from .planning import TaskPlanner, StepExecutor, Step
+# Import planning logic (temporarily commented out due to missing file and ENABLE_PLANNING=False)
+# from .planning import TaskPlanner, StepExecutor, Step
 
 
 class CodingAgent:
@@ -181,14 +181,15 @@ class CodingAgent:
                 get_git_log_tool(),
             ])
 
-        # 2. Wrap tools with retry logic for resilience
-        wrapped_tools = wrap_tools_with_retry(
-            raw_tools,
-            max_retries=settings.TOOL_MAX_RETRIES,
-            backoff_factor=settings.TOOL_RETRY_BACKOFF,
-            initial_delay=settings.TOOL_RETRY_INITIAL_DELAY,
-            max_delay=settings.TOOL_RETRY_MAX_DELAY
-        )
+        # 2. Wrap tools with retry logic for resilience (temporarily disabled due to missing file)
+        wrapped_tools = raw_tools
+        # wrapped_tools = wrap_tools_with_retry(
+        #     raw_tools,
+        #     max_retries=settings.TOOL_MAX_RETRIES,
+        #     backoff_factor=settings.TOOL_RETRY_BACKOFF,
+        #     initial_delay=settings.TOOL_RETRY_INITIAL_DELAY,
+        #     max_delay=settings.TOOL_RETRY_MAX_DELAY
+        # )
 
         return wrapped_tools
 
@@ -206,13 +207,15 @@ class CodingAgent:
             checkpointer=self.checkpointer
         )
 
-        # 3. Initialize planning components (if enabled)
-        if settings.ENABLE_PLANNING:
-            self.planner = TaskPlanner(self.llm, self.tools)
-            self.executor = StepExecutor(self.tools, verbose=settings.PLANNING_VERBOSE)
-        else:
-            self.planner = None
-            self.executor = None
+        # 3. Initialize planning components (if enabled - currently disabled due to missing modules)
+        # if settings.ENABLE_PLANNING:
+        #     self.planner = TaskPlanner(self.llm, self.tools)
+        #     self.executor = StepExecutor(self.tools, verbose=settings.PLANNING_VERBOSE)
+        # else:
+        #     self.planner = None
+        #     self.executor = None
+        self.planner = None
+        self.executor = None
 
     def _get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
         """Get or create session history."""
@@ -642,109 +645,3 @@ class CodingAgent:
 
         # Cap at 10
         return min(10, int(score))
-
-    def ask_with_planning(
-        self,
-        query: str,
-        auto_approve: Optional[bool] = None
-    ) -> BaseMessage:
-        """Ask the agent a question using multi-step planning.
-
-        This method creates a plan first, optionally shows it to the user for
-        approval, then executes the plan step by step.
-
-        Args:
-            query: User's question or task
-            auto_approve: Whether to auto-approve the plan (overrides settings)
-
-        Returns:
-            Final response message with execution summary
-
-        Raises:
-            ValueError: If planning is disabled or fails
-        """
-        if not self.planner or not self.executor:
-            raise ValueError("Planning is disabled. Enable with ENABLE_PLANNING=true in .env")
-
-        # Create the plan
-        plan = self.planner.create_plan(query)
-
-        # Validate plan
-        if not self.planner.validate_plan(plan):
-            return AIMessage(content="Failed to create a valid execution plan. Falling back to direct execution.")
-
-        # Format plan for display
-        plan_text = self._format_plan_for_display(plan)
-
-        # Check if user approval is needed
-        should_auto_approve = auto_approve if auto_approve is not None else settings.PLANNING_AUTO_APPROVE
-
-        if not should_auto_approve:
-            # Return plan for user review (CLI will handle approval)
-            return AIMessage(content=f"**Execution Plan:**\n\n{plan_text}\n\n_Use 'approve' to execute or 'cancel' to abort._")
-
-        # Execute the plan
-        results = self.executor.execute_plan(plan)
-
-        # Update conversation history
-        self._get_session_history(self.session_id).add_user_message(query)
-
-        # Generate summary message
-        summary = self._generate_plan_summary(results)
-        self._get_session_history(self.session_id).add_ai_message(summary)
-
-        return AIMessage(content=summary)
-
-    def _format_plan_for_display(self, plan: List[Step]) -> str:
-        """Format a plan for user-friendly display.
-
-        Args:
-            plan: List of steps
-
-        Returns:
-            Formatted plan text
-        """
-        lines = []
-        for step in plan:
-            lines.append(f"**Step {step.number}:** {step.description}")
-            lines.append(f"  - Tool: `{step.tool}`")
-            if step.input_params:
-                params_str = ", ".join(f"{k}={v}" for k, v in step.input_params.items())
-                lines.append(f"  - Input: {params_str}")
-            lines.append(f"  - Expected: {step.expected_output}")
-            if step.dependencies:
-                deps_str = ", ".join(str(d) for d in step.dependencies)
-                lines.append(f"  - Depends on: Step(s) {deps_str}")
-            lines.append("")  # Blank line
-
-        return "\n".join(lines)
-
-    def _generate_plan_summary(self, results: Dict[str, Any]) -> str:
-        """Generate a summary message after plan execution.
-
-        Args:
-            results: Results dictionary from StepExecutor
-
-        Returns:
-            Summary message
-        """
-        plan = results["steps"]
-        success = results["success"]
-
-        if success:
-            summary = f"✓ **Plan completed successfully!**\n\n"
-        else:
-            failed_step = results["failed_step"]
-            summary = f"✗ **Plan failed at step {failed_step}**\n\n"
-
-        # List completed steps
-        summary += "**Execution Summary:**\n"
-        for step in plan:
-            if step.status == "completed":
-                summary += f"✓ Step {step.number}: {step.description}\n"
-            elif step.status == "failed":
-                summary += f"✗ Step {step.number}: {step.description} (Error: {step.error})\n"
-            elif step.status == "skipped":
-                summary += f"⊘ Step {step.number}: {step.description} (Skipped)\n"
-
-        return summary

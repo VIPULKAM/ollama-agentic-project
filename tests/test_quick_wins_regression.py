@@ -10,6 +10,7 @@ import tempfile
 import shutil
 from src.agent.agent import CodingAgent
 from src.agent.tools.smart_file_ops import get_update_file_section_tool
+from src.config import settings
 
 
 class TestStreamingResponses:
@@ -200,10 +201,11 @@ Final section.
 class TestAgentIntegration:
     """Test that new tools integrate properly with agent."""
 
-    def test_agent_has_six_tools(self):
-        """Verify agent has 6 tools (5 original + 1 new)."""
+    def test_agent_has_twelve_tools(self):
+        """Verify agent has 12 tools (6 file ops + 1 RAG + 5 git tools)."""
         agent = CodingAgent()
-        assert len(agent.tools) == 6, f"Expected 6 tools, got {len(agent.tools)}"
+        # 4 basic file ops + 2 smart file ops + 1 RAG + 5 git tools = 12
+        assert len(agent.tools) == 12, f"Expected 12 tools, got {len(agent.tools)}: {[t.name for t in agent.tools]}"
 
     def test_update_file_section_tool_registered(self):
         """Verify update_file_section tool is available."""
@@ -253,8 +255,11 @@ class TestBackwardCompatibility:
         assert hasattr(response, 'content'), "Should have content attribute"
         assert len(response.content) > 0, "Content should not be empty"
 
-    def test_clear_history_works(self):
+    def test_clear_history_works(self, monkeypatch):
         """Verify clear_history still works."""
+        # Disable tools for this test to ensure conversational mode works
+        monkeypatch.setattr(settings, "ENABLE_TOOLS", False)
+
         agent = CodingAgent()
 
         agent.ask("Test message")

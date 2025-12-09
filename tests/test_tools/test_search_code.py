@@ -29,7 +29,8 @@ class TestSearchCodeTool:
         """Test searching for a simple pattern in current directory."""
         # Search for "import" in Python files (should find many in src/)
         result = tool._run("import", ".", "py")
-        assert "Error" not in result
+        # Check for actual error messages, not just the word "Error" in results
+        assert not result.startswith("Error:"), f"Search failed with error: {result}"
         # Should find matches
         assert "matches found" in result.lower() or "no matches" in result.lower()
 
@@ -140,7 +141,8 @@ class TestSearchCodePathValidation:
     def test_search_in_subdirectory(self, tool):
         """Test searching in subdirectories."""
         result = tool._run("import", "src", "py")
-        assert "Error" not in result
+        # Check for actual error messages, not just the word "Error" in results
+        assert not result.startswith("Error:"), f"Search failed with error: {result}"
         # Should either find matches or report no matches
         assert "matches" in result.lower()
 

@@ -14,7 +14,9 @@ def gemini_agent(monkeypatch):
     """Fixture to create a CodingAgent with the Gemini provider."""
     monkeypatch.setattr(settings, "LLM_PROVIDER", "gemini")
     monkeypatch.setattr(settings, "GOOGLE_API_KEY", "dummy-api-key")
-    
+    # Disable tools mode for these tests since FakeListLLM doesn't support bind_tools()
+    monkeypatch.setattr(settings, "ENABLE_TOOLS", False)
+
     # Patch the actual ChatGoogleGenerativeAI class to return a fake LLM
     # This avoids real API calls while still testing the initialization logic
     with patch("src.agent.agent.ChatGoogleGenerativeAI") as mock_gemini:
