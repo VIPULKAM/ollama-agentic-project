@@ -767,6 +767,94 @@ Note: Some tests require Ollama to be running (`ollama serve`) and the model to 
     - ✅ Removed unused imports from `src/rag/web_crawler.py`
     - ✅ **Result**: Clean dependency tree, no circular imports, all tests passing
 
+21. **Index Management System** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Created `src/rag/index_manager.py` module (340 lines)
+    - ✅ Implemented 4 main functions for index operations:
+      - `get_index_info()` - Comprehensive index statistics
+        - Returns: exists, total_chunks, total_files, crawled_urls, index_size_mb, last_updated
+        - Breakdown by source (local vs crawled) and language
+        - Embedding model and version tracking
+      - `rebuild_index()` - Rebuild entire FAISS index from scratch
+        - Force reindex with progress indicators
+        - Returns statistics: success, chunks_indexed, files_processed, errors, duration
+      - `clean_index()` - Remove orphaned chunks (deleted files)
+        - Checks file existence, rebuilds index with valid chunks only
+        - Returns: success, chunks_removed, chunks_remaining, files_removed
+      - `search_index()` - Direct index search with configurable parameters
+        - Configurable threshold, top_k, source filtering (local/crawled)
+        - Useful for testing and debugging search relevance
+    - ✅ CLI integration in `src/cli/main.py`:
+      - `index` or `index --info` - Show index statistics (3 rich tables)
+      - `index --rebuild` - Rebuild index with confirmation prompt
+      - `index --clean` - Clean orphaned chunks
+      - `index --search "query" [--threshold 0.3] [--top-k 10] [--source local/crawled]`
+    - ✅ Rich console output with tables and colored panels
+    - ✅ Custom exception: `IndexNotFoundError` with helpful messages
+    - ✅ Comprehensive test suite: `tests/test_rag/test_index_manager.py`
+      - 10 tests covering all functions and error cases
+      - Mock-based unit tests for clean isolation
+      - Tests for info retrieval, rebuild, cleaning, search, error handling
+    - ✅ **Bug Fixes During Testing**:
+      - Fixed `build_index()` parameter mismatch (root_dir → cwd, added force_reindex)
+      - Fixed `load_index()` unpacking (returns 2 values, not 3)
+      - Fixed `SemanticRetriever()` initialization (requires settings parameter)
+      - Fixed search parameter name (threshold → similarity_threshold)
+      - Added `--threshold` CLI parameter for adjustable search strictness
+    - ✅ **Benefits**: Complete control over RAG index lifecycle, debugging tools, maintenance operations
+
+22. **Batch Documentation Crawling** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Created `src/rag/batch_crawler.py` module (340 lines)
+    - ✅ Implemented `BatchCrawler` class for efficient multi-URL crawling:
+      - `crawl_batch()` - Parallel crawl with concurrency limits
+        - asyncio semaphore for max concurrent operations (default: 5)
+        - Rate limiting with configurable delay (default: 1 second)
+        - Duplicate detection using CrawlTracker
+        - Progress tracking with tqdm
+        - Returns `BatchCrawlResult` with detailed statistics
+      - `crawl_from_file()` - Read URLs from text file
+        - One URL per line, `#` for comments
+        - Automatic blank line skipping
+      - `crawl_from_sitemap()` - Fetch and parse sitemap.xml
+        - Async HTTP fetch with aiohttp
+        - XML parsing with ElementTree
+        - Namespace handling for standard sitemaps
+        - URL filtering support (e.g., only /api/ URLs)
+      - `_parse_sitemap()` - XML parsing with namespace support
+        - Handles both namespaced and non-namespaced sitemaps
+        - Optional URL filtering by substring
+    - ✅ `BatchCrawlResult` dataclass with comprehensive stats:
+      - total_urls, successful, failed, skipped
+      - duration_seconds, urls_crawled, urls_failed, urls_skipped
+    - ✅ Convenience functions for simple usage:
+      - `batch_crawl_urls()` - Direct batch crawling
+      - `batch_crawl_from_file()` - File-based crawling
+      - `batch_crawl_from_sitemap()` - Sitemap-based crawling
+    - ✅ CLI integration in `src/cli/main.py`:
+      - `crawl --batch <file> [--parallel N]` - Batch crawl from file
+      - `crawl --sitemap <url> [--filter pattern] [--parallel N]` - Crawl from sitemap
+      - Rich table output with colored results
+      - Error details displayed in separate table
+    - ✅ Updated help messages with new batch crawling commands
+    - ✅ Comprehensive test suite: `tests/test_rag/test_batch_crawler.py`
+      - 18 tests covering all functionality
+      - Tests for initialization, batch crawling, failures, duplicates
+      - File-based crawling tests with temp files
+      - Sitemap tests with mock HTTP responses
+      - XML parsing tests (with/without namespace, filtering, errors)
+      - Async context manager mocking for aiohttp
+      - Convenience function tests
+    - ✅ **Code Quality Improvements**:
+      - Removed unused `WebDocumentationCrawler` initialization
+      - Simplified cleanup() method (no-op, uses tools directly)
+      - Fixed async mock setup for proper `async with` support
+    - ✅ **Benefits**:
+      - Efficiently crawl entire documentation sites
+      - Sitemap support for auto-discovery
+      - Rate limiting to respect server limits
+      - Parallel execution for speed
+      - Skip duplicates to save time/costs
+    - ✅ **Total Test Count**: 303 tests (285 existing + 18 batch crawler)
+
 ## Future Enhancements (as documented)
 
 From ARCHITECTURE.md roadmap:
@@ -813,7 +901,9 @@ ollama-agentic-project/
 │   │   ├── indexer.py            # FAISS index building (✅ COMPLETE)
 │   │   ├── retriever.py          # Semantic search (✅ COMPLETE)
 │   │   ├── web_crawler.py        # CrawlAI web documentation (✅ COMPLETE)
-│   │   └── crawl_tracker.py      # URL tracking & deduplication (✅ COMPLETE)
+│   │   ├── crawl_tracker.py      # URL tracking & deduplication (✅ COMPLETE)
+│   │   ├── index_manager.py      # Index management utilities (✅ COMPLETE)
+│   │   └── batch_crawler.py      # Batch crawling & sitemap support (✅ COMPLETE)
 │   └── utils/
 │       ├── __init__.py
 │       ├── logging.py            # Structured logging (✅ COMPLETE)
@@ -831,12 +921,14 @@ ollama-agentic-project/
 │   │   ├── test_search_code.py
 │   │   ├── test_file_ops_security.py
 │   │   └── test_crawl_and_index.py
-│   └── test_rag/                 # RAG tests (5 test files)
+│   └── test_rag/                 # RAG tests (7 test files)
 │       ├── test_embeddings.py
 │       ├── test_indexer_integration.py
 │       ├── test_retriever.py
-│       ├── test_crawl_tracker.py       # ✅ NEW (31 tests)
-│       └── test_crawl_integration.py   # ✅ NEW (8 tests)
+│       ├── test_crawl_tracker.py       # ✅ (31 tests)
+│       ├── test_crawl_integration.py   # ✅ (8 tests)
+│       ├── test_index_manager.py       # ✅ NEW (10 tests)
+│       └── test_batch_crawler.py       # ✅ NEW (18 tests)
 ├── scripts/
 │   ├── benchmark_models.py       # Model comparison
 │   └── test_react_format.py      # ReAct validation (✅ PASSED)

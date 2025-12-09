@@ -19,7 +19,13 @@ from ..rag.index_manager import (
     search_index,
     IndexNotFoundError
 )
+from ..rag.batch_crawler import (
+    batch_crawl_from_file,
+    batch_crawl_from_sitemap,
+    BatchCrawlResult
+)
 import asyncio
+from pathlib import Path
 
 console = Console()
 
@@ -42,8 +48,11 @@ def print_welcome():
   - `index --rebuild` - Rebuild entire index from scratch
   - `index --clean` - Remove orphaned chunks
   - `index --search "query" [--threshold 0.3]` - Search the index directly
-- `crawl <url>` - Crawl and index a documentation URL
-- `crawled` - Show crawled documentation history
+- **Documentation Crawling:**
+  - `crawl <url>` - Crawl and index a single documentation URL
+  - `crawl --batch <file> [--parallel N]` - Batch crawl URLs from file
+  - `crawl --sitemap <url> [--filter pattern] [--parallel N]` - Crawl from sitemap
+  - `crawled` - Show crawled documentation history
 - `clear` - Clear conversation history
 - `info` - Show model information
 - `help` - Show this help message
@@ -327,6 +336,94 @@ def run_crawl(url: str):
         console.print(f"\n[red]✗ Crawling failed: {e}[/red]")
 
 
+def run_batch_crawl(file_path: str, max_concurrent: int = 5):
+    """Crawl multiple URLs from a file."""
+    console.print(f"\n[yellow]Batch crawling URLs from {file_path}...[/yellow]")
+    console.print(f"[dim]Max concurrent: {max_concurrent}[/dim]\n")
+
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            console.print(f"[red]✗ File not found: {file_path}[/red]")
+            return
+
+        # Run async batch crawl
+        result = asyncio.run(batch_crawl_from_file(
+            path,
+            max_concurrent=max_concurrent,
+            show_progress=True
+        ))
+
+        # Display results
+        console.print(f"\n[green]✓ Batch crawl complete![/green]")
+
+        table = Table(title="Batch Crawl Results", show_header=True)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+
+        table.add_row("Total URLs", str(result.total_urls))
+        table.add_row("Successful", f"[green]{result.successful}[/green]")
+        table.add_row("Failed", f"[red]{result.failed}[/red]" if result.failed > 0 else "0")
+        table.add_row("Skipped (already crawled)", f"[blue]{result.skipped}[/blue]")
+        table.add_row("Duration", f"{result.duration_seconds:.1f}s")
+
+        console.print(table)
+
+        # Show failed URLs if any
+        if result.urls_failed:
+            console.print("\n[red]Failed URLs:[/red]")
+            for failed in result.urls_failed[:5]:  # Show first 5
+                console.print(f"[red]  ✗ {failed['url']}: {failed['error'][:50]}...[/red]")
+            if len(result.urls_failed) > 5:
+                console.print(f"[dim]  ... and {len(result.urls_failed) - 5} more[/dim]")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Batch crawl failed: {e}[/red]")
+
+
+def run_sitemap_crawl(sitemap_url: str, url_filter: str = None, max_concurrent: int = 5):
+    """Crawl URLs from a sitemap."""
+    console.print(f"\n[yellow]Crawling from sitemap: {sitemap_url}...[/yellow]")
+    if url_filter:
+        console.print(f"[dim]Filter: Only URLs containing '{url_filter}'[/dim]")
+    console.print(f"[dim]Max concurrent: {max_concurrent}[/dim]\n")
+
+    try:
+        # Run async sitemap crawl
+        result = asyncio.run(batch_crawl_from_sitemap(
+            sitemap_url,
+            url_filter=url_filter,
+            max_concurrent=max_concurrent,
+            show_progress=True
+        ))
+
+        # Display results
+        console.print(f"\n[green]✓ Sitemap crawl complete![/green]")
+
+        table = Table(title="Sitemap Crawl Results", show_header=True)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+
+        table.add_row("Total URLs", str(result.total_urls))
+        table.add_row("Successful", f"[green]{result.successful}[/green]")
+        table.add_row("Failed", f"[red]{result.failed}[/red]" if result.failed > 0 else "0")
+        table.add_row("Skipped (already crawled)", f"[blue]{result.skipped}[/blue]")
+        table.add_row("Duration", f"{result.duration_seconds:.1f}s")
+
+        console.print(table)
+
+        # Show failed URLs if any
+        if result.urls_failed:
+            console.print("\n[red]Failed URLs:[/red]")
+            for failed in result.urls_failed[:5]:
+                console.print(f"[red]  ✗ {failed['url']}: {failed['error'][:50]}...[/red]")
+            if len(result.urls_failed) > 5:
+                console.print(f"[dim]  ... and {len(result.urls_failed) - 5} more[/dim]")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Sitemap crawl failed: {e}[/red]")
+
+
 def show_crawled_history():
     """Display crawled documentation history."""
     tracker = get_crawl_tracker()
@@ -470,11 +567,68 @@ def main():
                 continue
 
             elif query.lower().startswith("crawl "):
-                url = query[6:].strip()  # Extract URL after "crawl "
-                if url:
-                    run_crawl(url)
+                # Parse crawl command with options
+                parts = query.split()
+
+                if len(parts) < 2:
+                    console.print("[red]Usage: crawl <url> | crawl --batch <file> | crawl --sitemap <url>[/red]")
+                    continue
+
+                # Check for batch mode
+                if "--batch" in parts:
+                    batch_idx = parts.index("--batch")
+                    if batch_idx + 1 < len(parts):
+                        file_path = parts[batch_idx + 1]
+
+                        # Extract --parallel option
+                        max_concurrent = 5
+                        if "--parallel" in parts:
+                            parallel_idx = parts.index("--parallel")
+                            if parallel_idx + 1 < len(parts):
+                                try:
+                                    max_concurrent = int(parts[parallel_idx + 1])
+                                except ValueError:
+                                    pass
+
+                        run_batch_crawl(file_path, max_concurrent=max_concurrent)
+                    else:
+                        console.print("[red]Usage: crawl --batch <file> [--parallel N][/red]")
+
+                # Check for sitemap mode
+                elif "--sitemap" in parts:
+                    sitemap_idx = parts.index("--sitemap")
+                    if sitemap_idx + 1 < len(parts):
+                        sitemap_url = parts[sitemap_idx + 1]
+
+                        # Extract --filter option
+                        url_filter = None
+                        if "--filter" in parts:
+                            filter_idx = parts.index("--filter")
+                            if filter_idx + 1 < len(parts):
+                                url_filter = parts[filter_idx + 1]
+
+                        # Extract --parallel option
+                        max_concurrent = 5
+                        if "--parallel" in parts:
+                            parallel_idx = parts.index("--parallel")
+                            if parallel_idx + 1 < len(parts):
+                                try:
+                                    max_concurrent = int(parts[parallel_idx + 1])
+                                except ValueError:
+                                    pass
+
+                        run_sitemap_crawl(sitemap_url, url_filter=url_filter, max_concurrent=max_concurrent)
+                    else:
+                        console.print("[red]Usage: crawl --sitemap <url> [--filter pattern] [--parallel N][/red]")
+
+                # Regular single URL crawl
                 else:
-                    console.print("[red]Usage: crawl <url>[/red]")
+                    url = query[6:].strip()  # Extract URL after "crawl "
+                    if url:
+                        run_crawl(url)
+                    else:
+                        console.print("[red]Usage: crawl <url>[/red]")
+
                 continue
 
             elif query.lower() == "crawled":
