@@ -201,11 +201,11 @@ Final section.
 class TestAgentIntegration:
     """Test that new tools integrate properly with agent."""
 
-    def test_agent_has_twelve_tools(self):
-        """Verify agent has 12 tools (6 file ops + 1 RAG + 5 git tools)."""
+    def test_agent_has_thirteen_tools(self):
+        """Verify agent has 13 tools (6 file ops + 1 RAG + 1 crawl + 5 git tools)."""
         agent = CodingAgent()
-        # 4 basic file ops + 2 smart file ops + 1 RAG + 5 git tools = 12
-        assert len(agent.tools) == 12, f"Expected 12 tools, got {len(agent.tools)}: {[t.name for t in agent.tools]}"
+        # 4 basic file ops + 2 smart file ops + 1 RAG + 1 crawl_and_index + 5 git tools = 13
+        assert len(agent.tools) == 13, f"Expected 13 tools, got {len(agent.tools)}: {[t.name for t in agent.tools]}"
 
     def test_update_file_section_tool_registered(self):
         """Verify update_file_section tool is available."""

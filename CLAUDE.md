@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Purpose**: Specialized coding assistant for Python, TypeScript, and database technologies (PostgreSQL, MySQL, MongoDB, Snowflake, ClickHouse, Redis, etc.)
 
-**Current Status**: ✅ Production-ready - 234 tests passing, LangGraph agent with Claude Sonnet 4, full tool calling support, RAG system, and CrawlAI web documentation indexing
+**Current Status**: ✅ Production-ready - 285 tests passing, LangGraph agent with Claude Sonnet 4, full tool calling support, RAG system with URL tracking, CrawlAI integration, autonomous documentation crawling, and parallel test infrastructure
 
 ## Architecture
 
@@ -31,11 +31,12 @@ The agent uses LangChain's provider abstraction to support three modes:
 - **Prompt System** (src/agent/prompts.py): System prompt with database expertise
 - **CLI Interface** (src/cli/main.py): Rich terminal UI with markdown rendering
 - **Settings** (src/config/settings.py): Pydantic-based configuration with .env support
-- **Tools System** (src/agent/tools/): 12 tools ready for agent integration ✅
+- **Tools System** (src/agent/tools/): 13 tools ready for agent integration ✅
   - File operations: ReadFileTool, WriteFileTool, ListDirectoryTool, SearchCodeTool
   - Smart file operations: SmartReadFileTool, UpdateFileSectionTool (for large files)
   - Git tools: GitStatusTool, GitDiffTool, GitCommitTool, GitBranchTool, GitLogTool
   - RAG search: RagSearchTool for semantic codebase search
+  - Web crawling: CrawlAndIndexTool for autonomous documentation crawling ✅ NEW
 - **RAG System** (src/rag/): Complete FAISS-based semantic search pipeline ✅
   - Embeddings: sentence-transformers/all-MiniLM-L6-v2 with singleton caching
   - Indexing: File discovery with gitignore, AST-based chunking, FAISS IndexFlatL2
@@ -79,6 +80,7 @@ The agent has evolved through three phases:
 - Listing directory contents
 - Searching code with regex
 - Semantic codebase search using RAG
+- **Autonomous documentation crawling and indexing** ✅ NEW - Agent can crawl web docs and add to RAG index
 - Multi-step reasoning with tool composition
 - State persistence across sessions (via LangGraph checkpointing)
 
@@ -368,7 +370,8 @@ Tests are in the `tests/` directory with comprehensive coverage:
 - **test_write_file.py**: 30+ tests for write functionality, backups, diffs, confirmations
 - **test_search_code.py**: 40+ tests for regex search, file filtering, exclusions
 - **test_file_ops_security.py**: 30+ security tests (path traversal, symlinks, size limits)
-- **Total**: 147 tests, all passing
+- **test_crawl_and_index.py**: 12+ tests for autonomous web crawling and indexing ✅ NEW
+- **Total**: 159 tests, all passing
 
 ### RAG Tests (tests/test_rag/) - ✅ COMPLETE
 - **test_embeddings.py**: 31 tests for model loading, caching, embedding generation ✅ COMPLETE
@@ -403,10 +406,13 @@ def test_agent():
 ### Test Count Verification
 
 The project currently has:
-- **Tool Tests**: 5 test files in `tests/test_tools/` (~147 assertions)
-- **RAG Tests**: 3 test files in `tests/test_rag/` (~48 assertions)
-- **Agent Tests**: Multiple files in `tests/` for agent, CLI, providers
-- **Total**: 16 test files with comprehensive coverage
+- **Tool Tests**: 6 test files in `tests/test_tools/` (159+ assertions including crawl_and_index)
+- **RAG Tests**: 5 test files in `tests/test_rag/` (87 assertions: 48 core + 39 crawler)
+  - Core RAG: embeddings (31), indexer (9), retriever (8)
+  - Crawler: tracker unit tests (31), integration tests (8)
+- **Agent Tests**: Multiple files in `tests/` for agent, CLI, providers (39+ assertions)
+- **Total**: 285 tests across 19 test files with comprehensive coverage
+- **Parallel Execution**: 3-4x faster with pytest-xdist on multi-core systems
 
 Note: Some tests require Ollama to be running (`ollama serve`) and the model to be available (`ollama pull qwen2.5-coder:1.5b`).
 
@@ -585,24 +591,22 @@ Note: Some tests require Ollama to be running (`ollama serve`) and the model to 
 ### ✅ Phase 2: Tools & RAG System Complete
 
 **Summary**: All file operation tools and RAG components are implemented, tested, and ready for agent integration.
-- **Total Tests**: 234 tests passing (147 file ops + 48 RAG + 39 agent/integration)
-- **Test Coverage**: Unit tests + integration tests + security tests
-- **Components**: 12 tools (6 file ops + 1 RAG + 5 git tools) + embeddings + indexing + retrieval
+- **Total Tests**: 285 tests passing (159 tool tests + 87 RAG + 39 agent/integration)
+- **Test Coverage**: Unit tests + integration tests + security tests + parallel execution
+- **Components**: 13 tools (6 file ops + 1 RAG + 1 crawl + 5 git tools) + embeddings + indexing + retrieval + URL tracking
 - **Status**: ✅ Fully integrated with Claude Sonnet 4
 
 ---
 
 ### ⚠️ Completed with Limitations: Agent Integration
 
-10. **Step 4: Agent Refactoring** ⚠️ COMPLETE (with model limitations)
+10. **Step 4: Agent Refactoring** ✅ COMPLETE
     - ✅ Upgraded from ConversationChain to LangGraph ReAct agent using `create_react_agent`
-    - ✅ Registered all 5 tools (4 file ops + 1 RAG search)
+    - ✅ Registered all 13 tools (6 file ops + 1 RAG + 1 crawl + 5 git tools)
     - ✅ Implemented MemorySaver for state persistence via checkpointing
     - ✅ Cleaned up unused imports and fixed missing methods
     - ✅ Fixed dependency conflicts (langgraph 0.2.76 + langchain-core 0.3.63)
-    - ⚠️ **Model Compatibility Issue**: qwen2.5-coder:1.5b lacks native tool calling support
-    - ✅ Agent works in conversational mode (`ENABLE_TOOLS=False`)
-    - ⚠️ Agent requires Claude/GPT/Gemini for tool mode (`ENABLE_TOOLS=True`)
+    - ✅ Migrated to Claude Sonnet 4 for native tool calling support
     - ✅ Added tests: `test_agent_react.py` and `test_langgraph_agent.py`
 
 11. **Step 5: CLI Integration** (PARTIAL - IN PROGRESS)
@@ -613,14 +617,16 @@ Note: Some tests require Ollama to be running (`ollama serve`) and the model to 
     - ⏳ Add progress indicators for indexing (TODO)
 
 12. **Step 6: Testing & Validation** ✅ COMPLETE
-    - ✅ Unit tests for file operations (COMPLETE - 5 test files)
+    - ✅ Unit tests for file operations (COMPLETE - 6 test files including crawl_and_index)
     - ✅ Unit tests for embeddings (COMPLETE)
     - ✅ Integration tests for indexer (COMPLETE)
     - ✅ Unit tests for retriever (COMPLETE)
+    - ✅ Crawler tests: URL tracking (31 tests) + integration (8 tests)
     - ✅ Security tests for path traversal, symlinks (COMPLETE)
     - ✅ LangGraph agent tests (COMPLETE - test_langgraph_agent.py)
     - ✅ End-to-end workflow tests with Claude Sonnet 4 (COMPLETE)
-    - ✅ All 234 tests passing
+    - ✅ Parallel test infrastructure with pytest-xdist
+    - ✅ All 285 tests passing
 
 ---
 
@@ -661,11 +667,105 @@ Note: Some tests require Ollama to be running (`ollama serve`) and the model to 
       - `CRAWLED_DOCS_PATH`, `CRAWLER_USER_AGENT`
     - ✅ Tested successfully: Crawled Python argparse docs (128KB markdown in 1.26s)
     - ✅ Added `crawl4ai>=0.7.7` to requirements.txt
-    - **Next Steps**:
-      - Create CrawlAndIndexTool for agent (allow Claude to crawl on demand)
-      - Add CLI `/crawl <url>` command
-      - Integrate crawled content with RAG indexer
+
+16. **CrawlAndIndexTool - Autonomous Documentation Crawling** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Created `src/agent/tools/crawl_and_index.py` module (250 lines)
+    - ✅ Implemented `CrawlAndIndexTool` - LangChain BaseTool for agent
+      - Crawls web documentation URLs on demand
+      - Chunks markdown content using existing chunker
+      - Adds chunks to existing FAISS index (incremental updates)
+      - Returns detailed summary of crawling and indexing operation
+    - ✅ Features:
+      - Async crawling with proper error handling
+      - Automatic integration with existing RAG index
+      - Creates new index if none exists
+      - Saves markdown files to crawled_docs directory
+      - Progress logging and detailed status reporting
+    - ✅ Registered with agent (13th tool)
+    - ✅ Added tool summary formatting for agent responses
+    - ✅ Created comprehensive test suite: `tests/test_tools/test_crawl_and_index.py`
+      - 12 tests covering initialization, crawling, chunking, indexing, error handling
+      - Mock-based unit tests (no network required)
+      - Integration test available (skipped by default)
+    - ✅ Updated regression tests for 13-tool count
+    - ✅ Initial test suite: 12 tests passing
+    - **Agent Capability**: Can now autonomously crawl and index documentation when asked!
+    - **Example**: "Crawl and index the FastAPI dependency injection docs"
+    - **Future Enhancements**:
+      - Add CLI `/crawl <url>` command for manual control ✅ COMPLETED (see section 17)
       - Add batch documentation crawling script
+      - Add sitemap support for crawling entire doc sites
+
+17. **URL Tracking & Deduplication System** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Created `src/rag/crawl_tracker.py` module (250 lines)
+    - ✅ Implemented `CrawlTracker` class for persistent URL tracking
+      - JSON-based storage at `~/.ai-agent/crawled_docs/crawled_urls.json`
+      - MD5 content hashing for change detection
+      - Tracks URL, date, content hash, chunk count, file path, title
+      - Deduplication: Skips re-crawling unchanged content
+      - Statistics: Total URLs, chunks, content size, average chunks per URL
+    - ✅ Created `CrawlRecord` dataclass for metadata storage
+    - ✅ Integrated tracking with `CrawlAndIndexTool`
+      - Automatic tracking of all crawled URLs
+      - Smart detection of content changes (re-index only if changed)
+      - Clear user feedback for duplicates vs updates
+    - ✅ Factory function: `get_crawl_tracker()` for global singleton
+    - ✅ **Benefits**: Saves time and API costs by avoiding duplicate crawls
+    - ✅ Comprehensive test suite: `tests/test_rag/test_crawl_tracker.py`
+      - 31 unit tests covering all functionality
+      - Tests for init, hashing, detection, record management, stats, persistence
+      - Parallel-safe using `tmp_path` fixtures
+
+18. **CLI Commands for Manual Crawling** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Added `crawl <url>` command to `src/cli/main.py`
+      - Directly crawls and indexes a URL without agent interaction
+      - Bypasses LangGraph recursion limits
+      - Color-coded output (green=success, blue=duplicate, red=error)
+      - Shows detailed statistics (chunks indexed, title)
+    - ✅ Added `crawled` command to show crawl history
+      - Rich table display with URL, title, chunks, date
+      - Sorted by crawl date (most recent first)
+      - Shows total chunks indexed across all URLs
+      - Empty state message if nothing crawled yet
+    - ✅ Updated help messages and welcome screen
+    - ✅ **User Experience**: Fast, direct control without triggering agent loops
+
+19. **Parallel Test Infrastructure** ✅ COMPLETE (Dec 8, 2024)
+    - ✅ Added `pytest-xdist==3.5.0` to requirements-dev.txt
+      - Enables parallel test execution across CPU cores
+      - 3-4x faster on multi-core systems
+    - ✅ Created `pytest.ini` configuration
+      - Test markers: unit, integration, slow, parallel, serial
+      - Asyncio mode: auto
+      - Strict markers and clean output
+    - ✅ Created `run_tests.sh` executable script (100+ lines)
+      - 10+ test modes: all, parallel, crawler, unit, integration, coverage, etc.
+      - Color-coded output and progress indicators
+      - Auto-detects CPU count for optimal parallelization
+    - ✅ Created `TESTING.md` comprehensive guide (250+ lines)
+      - Quick start, parallel execution guidelines
+      - Coverage reports, debugging techniques
+      - Best practices for parallel-safe tests
+      - CI/CD integration examples
+    - ✅ Crawler integration tests: `tests/test_rag/test_crawl_integration.py`
+      - 8 tests for complete crawl → track → index workflow
+      - Tests for deduplication, change detection, statistics
+      - Parameterized multi-URL tests for parallel execution
+    - ✅ **Test Results**: 39 crawler tests (31 unit + 8 integration) all passing in <2 seconds
+    - ✅ **Total Test Count**: 285 tests (246 existing + 39 crawler)
+
+20. **Circular Import Fix - Path Validation Refactoring** ✅ COMPLETE (Dec 8, 2024)
+    - **Problem**: Circular dependency between RAG and agent modules
+      - `src/rag/indexer_utils.py` imported from `src/agent/tools/file_ops.py`
+      - `src/agent/agent.py` imported from `src/agent/tools/crawl_and_index.py`
+      - `crawl_and_index.py` imported from `src/rag/indexer.py` (circular!)
+    - ✅ Created `src/utils/path_validation.py` shared module
+      - Moved `validate_path()`, `check_file_size()`, `CWD` constant
+      - Moved exceptions: `FileOperationError`, `PathValidationError`, `FileSizeError`
+    - ✅ Updated `src/agent/tools/file_ops.py` to import from shared module
+    - ✅ Updated `src/rag/indexer_utils.py` to import from shared module
+    - ✅ Removed unused imports from `src/rag/web_crawler.py`
+    - ✅ **Result**: Clean dependency tree, no circular imports, all tests passing
 
 ## Future Enhancements (as documented)
 
@@ -699,7 +799,8 @@ ollama-agentic-project/
 │   │   └── tools/
 │   │       ├── __init__.py       # Tool registry
 │   │       ├── file_ops.py       # File operation tools (✅ COMPLETE)
-│   │       └── rag_search.py     # RAG search tool (✅ COMPLETE)
+│   │       ├── rag_search.py     # RAG search tool (✅ COMPLETE)
+│   │       └── crawl_and_index.py # Web crawling tool (✅ COMPLETE)
 │   ├── cli/
 │   │   └── main.py               # Terminal interface
 │   ├── config/
@@ -710,26 +811,32 @@ ollama-agentic-project/
 │   │   ├── indexer_utils.py      # File discovery & gitignore (✅ COMPLETE)
 │   │   ├── chunker.py            # Code & text chunking (✅ COMPLETE)
 │   │   ├── indexer.py            # FAISS index building (✅ COMPLETE)
-│   │   └── retriever.py          # Semantic search (✅ COMPLETE)
+│   │   ├── retriever.py          # Semantic search (✅ COMPLETE)
+│   │   ├── web_crawler.py        # CrawlAI web documentation (✅ COMPLETE)
+│   │   └── crawl_tracker.py      # URL tracking & deduplication (✅ COMPLETE)
 │   └── utils/
 │       ├── __init__.py
-│       └── logging.py            # Structured logging (✅ COMPLETE)
+│       ├── logging.py            # Structured logging (✅ COMPLETE)
+│       └── path_validation.py    # Shared path validation (✅ COMPLETE)
 ├── tests/
 │   ├── test_agent.py             # Basic agent tests
 │   ├── test_agent_react.py       # ReAct agent tests
 │   ├── test_langgraph_agent.py   # LangGraph agent tests ✅ NEW
 │   ├── test_cli_info.py          # CLI info command tests
 │   ├── test_gemini_provider.py   # Gemini provider tests
-│   ├── test_tools/               # Tool tests (5 test files)
+│   ├── test_tools/               # Tool tests (6 test files)
 │   │   ├── test_read_file.py
 │   │   ├── test_list_directory.py
 │   │   ├── test_write_file.py
 │   │   ├── test_search_code.py
-│   │   └── test_file_ops_security.py
-│   └── test_rag/                 # RAG tests (3 test files)
+│   │   ├── test_file_ops_security.py
+│   │   └── test_crawl_and_index.py
+│   └── test_rag/                 # RAG tests (5 test files)
 │       ├── test_embeddings.py
 │       ├── test_indexer_integration.py
-│       └── test_retriever.py
+│       ├── test_retriever.py
+│       ├── test_crawl_tracker.py       # ✅ NEW (31 tests)
+│       └── test_crawl_integration.py   # ✅ NEW (8 tests)
 ├── scripts/
 │   ├── benchmark_models.py       # Model comparison
 │   └── test_react_format.py      # ReAct validation (✅ PASSED)
@@ -737,9 +844,14 @@ ollama-agentic-project/
 │   ├── ARCHITECTURE.md
 │   ├── DEPLOYMENT_ANALYSIS.md
 │   └── [other documentation]
+├── tests/
+│   └── ...                       # Test files (see above)
 ├── main.py                       # Entry point
-├── requirements.txt              # Includes LangGraph, FAISS, embeddings
-├── requirements-dev.txt          # Testing and development tools
+├── requirements.txt              # Includes LangGraph, FAISS, embeddings, CrawlAI
+├── requirements-dev.txt          # Testing and development tools (pytest-xdist)
+├── pytest.ini                    # Pytest configuration for parallel tests ✅ NEW
+├── run_tests.sh                  # Test runner script with 10+ modes ✅ NEW
+├── TESTING.md                    # Comprehensive testing guide ✅ NEW
 ├── .env.example                  # Configuration template
 └── CLAUDE.md                     # This file
 ```

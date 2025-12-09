@@ -16,110 +16,18 @@ from langchain.tools import BaseTool
 
 from ...config.settings import settings
 from ...utils.logging import file_ops_logger
+from ...utils.path_validation import (
+    FileOperationError,
+    PathValidationError,
+    FileSizeError,
+    validate_path,
+    check_file_size,
+    CWD
+)
 
-
-# Current working directory - all paths must be within this directory
-CWD = Path.cwd().resolve()
 
 # Regex to exclude common, unhelpful directories for search operations
 EXCLUDE_DIRS_PATTERN = re.compile(r'(\.git|\.venv|__pycache__|node_modules|\.mypy_cache)$', re.IGNORECASE)
-
-
-class FileOperationError(Exception):
-    """Base exception for file operation errors."""
-    pass
-
-
-class PathValidationError(FileOperationError):
-    """Exception raised when path validation fails."""
-    pass
-
-
-class FileSizeError(FileOperationError):
-    """Exception raised when file size exceeds limit."""
-    pass
-
-
-def validate_path(path_str: str, must_exist: bool = True) -> Path:
-    """Validate and resolve a file path to ensure it's safe.
-
-    Security checks:
-    - Path must be within current working directory
-    - No path traversal attacks (../)
-    - No symlinks pointing outside CWD
-    - File must exist (if must_exist=True)
-    - File must be readable/writable
-
-    Args:
-        path_str: Path string to validate
-        must_exist: Whether the path must exist (default: True)
-
-    Returns:
-        Path: Validated and resolved Path object
-
-    Raises:
-        PathValidationError: If validation fails
-    """
-    # Check for empty or whitespace-only strings
-    if not path_str or not path_str.strip():
-        raise PathValidationError("Path cannot be empty")
-
-    try:
-        # Convert to Path and resolve (resolves symlinks and ..)
-        path = Path(path_str).expanduser().resolve()
-
-        # Check if path is within CWD
-        try:
-            path.relative_to(CWD)
-        except ValueError:
-            raise PathValidationError(
-                f"Access denied: Path '{path_str}' is outside current working directory. "
-                f"Only files within {CWD} can be accessed."
-            )
-
-        # Check if path exists
-        if must_exist and not path.exists():
-            raise PathValidationError(f"Path does not exist: {path_str}")
-
-        # If it's a symlink, ensure target is also within CWD
-        if path.is_symlink():
-            real_path = path.resolve()
-            try:
-                real_path.relative_to(CWD)
-            except ValueError:
-                raise PathValidationError(
-                    f"Access denied: Symlink '{path_str}' points outside current working directory"
-                )
-
-        # Check if path is readable (only if it exists)
-        if must_exist and not os.access(path, os.R_OK):
-            raise PathValidationError(f"Permission denied: Cannot read {path_str}")
-        
-        # Prevent attempting to write to a directory
-        if path.exists() and path.is_dir() and not must_exist:
-            raise PathValidationError(f"Cannot write: '{path_str}' is a directory.")
-
-
-        return path
-
-    except (OSError, RuntimeError) as e:
-        raise PathValidationError(f"Invalid path '{path_str}': {str(e)}")
-
-
-def check_file_size(path: Path, max_size_mb: Optional[int] = None) -> None:
-    """Check if file size is within limits. (Existing function)"""
-    if max_size_mb is None:
-        max_size_mb = settings.MAX_FILE_SIZE_MB
-
-    max_size_bytes = max_size_mb * 1024 * 1024
-    file_size = path.stat().st_size
-
-    if file_size > max_size_bytes:
-        size_mb = file_size / (1024 * 1024)
-        raise FileSizeError(
-            f"File too large: {size_mb:.2f}MB (max: {max_size_mb}MB). "
-            f"Consider reading the file in chunks or increasing MAX_FILE_SIZE_MB."
-        )
 
 
 def read_file_content(path: Path) -> str:

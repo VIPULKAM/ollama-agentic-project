@@ -28,6 +28,7 @@ from .tools.file_ops import (
 )
 from .tools.smart_file_ops import get_update_file_section_tool, get_smart_read_file_tool
 from .tools.rag_search import get_rag_search_tool
+from .tools.crawl_and_index import get_crawl_and_index_tool
 from .tools.git_tools import (
     get_git_status_tool,
     get_git_diff_tool,
@@ -172,6 +173,9 @@ class CodingAgent:
         if settings.ENABLE_RAG:
             raw_tools.append(get_rag_search_tool(settings))
 
+        if settings.ENABLE_WEB_CRAWLING:
+            raw_tools.append(get_crawl_and_index_tool(settings))
+
         if settings.ENABLE_GIT_TOOLS:
             raw_tools.extend([
                 get_git_status_tool(),
@@ -265,7 +269,10 @@ class CodingAgent:
                 messages = history + [HumanMessage(content=query)]
 
                 # Invoke LangGraph with checkpointing for conversation memory
-                config = {"configurable": {"thread_id": self.session_id}}
+                config = {
+                    "configurable": {"thread_id": self.session_id},
+                    "recursion_limit": settings.AGENT_RECURSION_LIMIT
+                }
                 result = self.langgraph_app.invoke(
                     {"messages": messages},
                     config=config
@@ -388,7 +395,10 @@ class CodingAgent:
                 messages = history + [HumanMessage(content=query)]
 
                 # Stream LangGraph execution
-                config = {"configurable": {"thread_id": self.session_id}}
+                config = {
+                    "configurable": {"thread_id": self.session_id},
+                    "recursion_limit": settings.AGENT_RECURSION_LIMIT
+                }
 
                 for event in self.langgraph_app.stream(
                     {"messages": messages},
@@ -425,9 +435,13 @@ class CodingAgent:
                                     }
 
                 # Update history after streaming completes
+                config_with_limit = {
+                    "configurable": {"thread_id": self.session_id},
+                    "recursion_limit": settings.AGENT_RECURSION_LIMIT
+                }
                 result = self.langgraph_app.invoke(
                     {"messages": messages},
-                    config=config
+                    config=config_with_limit
                 )
                 final_message = result["messages"][-1]
 
@@ -536,6 +550,9 @@ class CodingAgent:
             elif tool_name == 'rag_search':
                 query = args.get('query', '')
                 summary_parts.append(f"{i}. Searched codebase for: `{query}`")
+            elif tool_name == 'crawl_and_index':
+                url = args.get('url', '')
+                summary_parts.append(f"{i}. Crawled and indexed documentation: `{url}`")
             else:
                 summary_parts.append(f"{i}. Executed tool: `{tool_name}`")
 

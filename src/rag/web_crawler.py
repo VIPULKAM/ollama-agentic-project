@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
-from .chunker import chunk_file, CodeChunk
-from .indexer import build_index
 from ..config.settings import settings
 
 logger = logging.getLogger(__name__)

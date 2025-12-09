@@ -16,7 +16,7 @@ from typing import Iterator, List, Optional
 import pathspec
 
 from ..config.settings import settings
-from ..agent.tools.file_ops import validate_path, PathValidationError
+from ..utils.path_validation import validate_path, PathValidationError
 
 # Configure logging
 logger = logging.getLogger("ai_agent.indexer")

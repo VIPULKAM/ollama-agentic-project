@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     ENABLE_GIT_TOOLS: bool = True  # Enable Git integration tools
     ENABLE_PLANNING: bool = False  # Explicitly disable planning due to missing modules
 
+    # Agent Configuration
+    AGENT_RECURSION_LIMIT: int = 50  # LangGraph recursion limit (default: 25)
+
     # RAG Configuration (NEW)
     VECTOR_DB: str = "faiss"  # Using FAISS instead of ChromaDB (better Python 3.13 support)
     FAISS_INDEX_PATH: str = str(Path.home() / ".ai-agent" / "faiss_index")

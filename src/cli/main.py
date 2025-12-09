@@ -10,6 +10,9 @@ from rich.table import Table
 from ..agent.agent import CodingAgent
 from ..config import settings
 from ..rag.indexer import build_index
+from ..rag.crawl_tracker import get_crawl_tracker
+from ..agent.tools.crawl_and_index import get_crawl_and_index_tool
+import asyncio
 
 console = Console()
 
@@ -29,6 +32,8 @@ def print_welcome():
 - `history` - Show conversation history
 - `index` - Build or update the RAG codebase index
 - `index --force` - Force a full re-index of the codebase
+- `crawl <url>` - Crawl and index a documentation URL
+- `crawled` - Show crawled documentation history
 - `clear` - Clear conversation history
 - `info` - Show model information
 - `help` - Show this help message
@@ -102,6 +107,9 @@ def print_help():
   perform semantic searches over your code. Run this command whenever your
   code changes.
 - **index --force** - Force a full re-index, ignoring any cached files.
+- **crawl \<url\>** - Crawl and index a documentation URL. The agent can then
+  search this documentation using RAG. Example: `crawl https://docs.python.org/3/library/json.html`
+- **crawled** - Show history of all crawled documentation URLs with statistics.
 - **clear** - Clear conversation history and start fresh.
 - **info** - Show current model configuration.
 - **help** - Show this help message.
@@ -131,19 +139,84 @@ def run_indexing(force: bool):
     try:
         stats = build_index(force_reindex=force)
         console.print("\n[green]✓ Indexing complete![/green]")
-        
+
         table = Table(title="Indexing Statistics", show_header=True)
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
-        
+
         table.add_row("Files Indexed", str(stats.get("files_indexed", 0)))
         table.add_row("Total Chunks", str(stats.get("total_chunks", 0)))
         table.add_row("Time Taken", f"{stats.get('time_taken', 0):.2f}s")
-        
+
         console.print(table)
-        
+
     except Exception as e:
         console.print(f"\n[red]✗ Indexing failed: {e}[/red]")
+
+
+def run_crawl(url: str):
+    """Crawl and index a documentation URL."""
+    console.print(f"\n[yellow]Crawling {url}...[/yellow]")
+
+    try:
+        tool = get_crawl_and_index_tool(settings)
+        result = tool._run(url)
+
+        if "Error" in result or "Failed" in result:
+            console.print(f"\n[red]{result}[/red]")
+        elif "already indexed with identical content" in result:
+            console.print(f"\n[blue]{result}[/blue]")
+        else:
+            console.print(f"\n[green]{result}[/green]")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Crawling failed: {e}[/red]")
+
+
+def show_crawled_history():
+    """Display crawled documentation history."""
+    tracker = get_crawl_tracker()
+    records = tracker.get_all_records()
+
+    if not records:
+        console.print("\n[dim]No documentation has been crawled yet[/dim]")
+        console.print("[dim]Use 'crawl <url>' to index documentation[/dim]")
+        return
+
+    table = Table(title=f"Crawled Documentation ({len(records)} URLs)", show_header=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("URL", style="cyan", width=50)
+    table.add_column("Title", style="white", width=30)
+    table.add_column("Chunks", justify="right", style="green")
+    table.add_column("Crawled", style="yellow", width=20)
+
+    for idx, record in enumerate(records, 1):
+        # Truncate URL if too long
+        url_display = record.url if len(record.url) <= 50 else record.url[:47] + "..."
+        title_display = record.title if len(record.title) <= 30 else record.title[:27] + "..."
+
+        # Format date nicely
+        from datetime import datetime
+        try:
+            dt = datetime.fromisoformat(record.crawl_date)
+            date_display = dt.strftime("%Y-%m-%d %H:%M")
+        except:
+            date_display = record.crawl_date[:16]
+
+        table.add_row(
+            str(idx),
+            url_display,
+            title_display,
+            str(record.chunk_count),
+            date_display
+        )
+
+    console.print(table)
+
+    # Show statistics
+    stats = tracker.get_stats()
+    console.print(f"\n[dim]Total chunks indexed: {stats['total_chunks']:,}[/dim]")
+    console.print(f"[dim]Total content: {stats['total_content_bytes'] / 1024:.1f} KB[/dim]")
 
 
 def main():
@@ -182,6 +255,18 @@ def main():
             elif query.lower().startswith("index"):
                 force = "--force" in query.lower()
                 run_indexing(force=force)
+                continue
+
+            elif query.lower().startswith("crawl "):
+                url = query[6:].strip()  # Extract URL after "crawl "
+                if url:
+                    run_crawl(url)
+                else:
+                    console.print("[red]Usage: crawl <url>[/red]")
+                continue
+
+            elif query.lower() == "crawled":
+                show_crawled_history()
                 continue
 
             elif query.lower() == 'clear':
